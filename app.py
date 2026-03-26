@@ -32,6 +32,9 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
     .block-container {
         padding-top: 1.5rem;
     }
@@ -291,6 +294,9 @@ def summarize_with_gemini(headlines: list[str], company: str, api_key: str) -> s
         )
         return response.text
     except Exception as e:
+        err_str = str(e).lower()
+        if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
+            return "⚠️ AI Summary currently unavailable: API Quota Exceeded."
         return f"⚠️ Gemini API error: {e}"
 
 
@@ -335,8 +341,69 @@ if entry_price > stop_loss:
         st.sidebar.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
         if total_deployed > capital:
             st.sidebar.warning("⚠️ Position exceeds your total capital!")
+            
+        # Download Trade Plan
+        plan_df = pd.DataFrame([{
+            "Ticker": st.session_state.get("symbol_input", "N/A"),
+            "Entry Price": entry_price,
+            "Stop Loss": stop_loss,
+            "Max Shares to Buy": shares_to_buy
+        }])
+        st.sidebar.download_button(
+            label="⬇️ Download Trade Plan",
+            data=plan_df.to_csv(index=False),
+            file_name="Trade_Plan.csv",
+            mime="text/csv",
+        )
 else:
     st.sidebar.error("Entry Price must be greater than Stop-Loss Price.")
+
+# Batch Processor (Watchlist Upload)
+st.sidebar.divider()
+st.sidebar.subheader("📂 Batch Processor")
+st.sidebar.markdown("_Upload a Screener.in CSV to rank setups._")
+watchlist_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+if watchlist_file is not None:
+    try:
+        w_df = pd.read_csv(watchlist_file)
+        ticker_col = "Ticker" if "Ticker" in w_df.columns else None
+        
+        if ticker_col is not None:
+            if st.sidebar.button("Run Batch Scan"):
+                with st.spinner("Scanning Watchlist (Top 50)..."):
+                    results = []
+                    tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
+                    for t in tickers:
+                        batch_ticker = t.strip().upper() + ".NS"
+                        b_df = fetch_ohlcv(batch_ticker)
+                        if not b_df.empty and len(b_df) > 50:
+                            b_df = compute_indicators(b_df)
+                            b_close = b_df["Close"].iloc[-1]
+                            b_sup1 = b_df["Support_1"].iloc[-1]
+                            b_res1 = b_df["Resistance_1"].iloc[-1]
+                            
+                            risk_pct = ((b_close - b_sup1) / b_close) * 100
+                            if b_res1 > b_sup1:
+                                raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                b_score = max(0, min(100, int(raw_s)))
+                            else:
+                                b_score = 50
+                                
+                            results.append({
+                                "Ticker": t,
+                                "Price": round(b_close, 2),
+                                "Support1": round(b_sup1, 2),
+                                "Risk to Stop %": round(risk_pct, 2),
+                                "Safety Score": b_score
+                            })
+                    if results:
+                        res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
+                        st.session_state["batch_results"] = res_df
+                        st.sidebar.success("Scan Complete! View results below.")
+        else:
+            st.sidebar.error("Could not find 'Ticker' or 'Symbol' column in CSV.")
+    except Exception as e:
+        st.sidebar.error(f"Error processing CSV: {e}")
 
 # Gemini API Key
 st.sidebar.divider()
@@ -364,6 +431,7 @@ with col_sym:
         "Stock Symbol",
         value="",
         placeholder="e.g., RELIANCE, TCS, INFY",
+        key="symbol_input",
     )
 with col_exch:
     exchange = st.selectbox("Exchange", ["NSE", "BSE"])
@@ -405,6 +473,48 @@ c2.metric("Day Change", f"₹{day_change:,.2f}", delta=f"{day_change:+,.2f}")
 c3.metric("52-Week High", f"₹{week52_high:,.2f}")
 c4.metric("52-Week Low", f"₹{week52_low:,.2f}")
 
+# --- Batch Results View ---
+if "batch_results" in st.session_state:
+    st.markdown("---")
+    st.subheader("🔥 Watchlist Batch Results")
+    st.dataframe(
+        st.session_state["batch_results"].style.background_gradient(cmap="RdYlGn_r", subset=["Risk to Stop %"]),
+        use_container_width=True
+    )
+
+# --- Visual Scoring (Gauge) ---
+c_gauge, c_empty = st.columns([1, 1])
+with c_gauge:
+    support_val = df["Support_1"].iloc[-1]
+    resistance_val = df["Resistance_1"].iloc[-1]
+    current_price = latest["Close"]
+    
+    if resistance_val > support_val:
+        raw_score = ((resistance_val - current_price) / (resistance_val - support_val)) * 100
+        safe_score = max(0, min(100, int(raw_score)))
+    else:
+        safe_score = 50
+
+    gauge_fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=safe_score,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': "Entry Safety Score", 'font': {'size': 20, 'color': 'white'}},
+        gauge={
+            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'bar': {'color': "#00D4AA"},
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 2,
+            'bordercolor': "gray",
+            'steps': [
+                {'range': [0, 33], 'color': 'rgba(255, 75, 75, 0.3)'},
+                {'range': [33, 66], 'color': 'rgba(255, 215, 0, 0.3)'},
+                {'range': [66, 100], 'color': 'rgba(0, 212, 170, 0.3)'}],
+        }
+    ))
+    gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+    st.plotly_chart(gauge_fig, use_container_width=True)
+
 # --- Earnings Warning ---
 earnings_date = check_earnings(full_ticker)
 if earnings_date:
@@ -424,7 +534,7 @@ st.plotly_chart(fig, use_container_width=True)
 # ===================================================================
 # MAIN AREA — The Story Engine
 # ===================================================================
-st.subheader("📰 The Story Engine: Recent Catalysts")
+st.subheader("📰 Recent Catalysts")
 
 with st.spinner("Fetching latest news..."):
     articles = fetch_news(company_name)

@@ -316,14 +316,21 @@ st.sidebar.title("📐 1% Risk Calculator")
 st.sidebar.divider()
 st.sidebar.markdown("_Never risk more than 1% of your capital on a single trade._")
 
+if "entry_price_key" not in st.session_state:
+    st.session_state["entry_price_key"] = 100.0
+if "stop_loss_key" not in st.session_state:
+    st.session_state["stop_loss_key"] = 95.0
+
 capital = st.sidebar.number_input(
-    "Total Account Capital (₹)", min_value=0.0, value=100000.0, step=10000.0
+    "Total Account Capital (₹)", min_value=0.0, value=100000.0, step=10000.0, key="capital_key"
 )
+st.session_state["capital_ext"] = capital
+
 entry_price = st.sidebar.number_input(
-    "Entry Price (₹)", min_value=0.01, value=100.0, step=0.5
+    "Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key"
 )
 stop_loss = st.sidebar.number_input(
-    "Stop-Loss Price (₹)", min_value=0.01, value=95.0, step=0.5
+    "Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key"
 )
 
 if entry_price > stop_loss:
@@ -341,20 +348,6 @@ if entry_price > stop_loss:
         st.sidebar.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
         if total_deployed > capital:
             st.sidebar.warning("⚠️ Position exceeds your total capital!")
-            
-        # Download Trade Plan
-        plan_df = pd.DataFrame([{
-            "Ticker": st.session_state.get("symbol_input", "N/A"),
-            "Entry Price": entry_price,
-            "Stop Loss": stop_loss,
-            "Max Shares to Buy": shares_to_buy
-        }])
-        st.sidebar.download_button(
-            label="⬇️ Download Trade Plan",
-            data=plan_df.to_csv(index=False),
-            file_name="Trade_Plan.csv",
-            mime="text/csv",
-        )
 else:
     st.sidebar.error("Entry Price must be greater than Stop-Loss Price.")
 
@@ -366,7 +359,13 @@ watchlist_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 if watchlist_file is not None:
     try:
         w_df = pd.read_csv(watchlist_file)
-        ticker_col = "Ticker" if "Ticker" in w_df.columns else None
+        w_df.columns = [str(c).strip() for c in w_df.columns]
+        lower_cols = [c.lower() for c in w_df.columns]
+        ticker_col = None
+        for c, lc in zip(w_df.columns, lower_cols):
+            if lc in ["ticker", "symbol", "name"]:
+                ticker_col = c
+                break
         
         if ticker_col is not None:
             if st.sidebar.button("Run Batch Scan"):
@@ -374,7 +373,22 @@ if watchlist_file is not None:
                     results = []
                     tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
                     for t in tickers:
-                        batch_ticker = t.strip().upper() + ".NS"
+                        if ticker_col.lower() == "name":
+                            try:
+                                s_res = yf.Search(t, max_results=1).quotes
+                                if s_res:
+                                    sym = s_res[0].get('symbol', '')
+                                    t_sym = sym if ".NS" in sym or ".BO" in sym else sym + ".NS"
+                                else:
+                                    t_sym = t.strip().upper() + ".NS"
+                            except Exception:
+                                t_sym = t.strip().upper() + ".NS"
+                        else:
+                            t_sym = t.strip().upper()
+                            if not t_sym.endswith(".NS") and not t_sym.endswith(".BO"):
+                                t_sym += ".NS"
+                                
+                        batch_ticker = t_sym
                         b_df = fetch_ohlcv(batch_ticker)
                         if not b_df.empty and len(b_df) > 50:
                             b_df = compute_indicators(b_df)
@@ -389,19 +403,23 @@ if watchlist_file is not None:
                             else:
                                 b_score = 50
                                 
+                            is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
+                                
                             results.append({
-                                "Ticker": t,
+                                "Select": False,
+                                "Ticker": t_sym,
                                 "Price": round(b_close, 2),
                                 "Support1": round(b_sup1, 2),
                                 "Risk to Stop %": round(risk_pct, 2),
-                                "Safety Score": b_score
+                                "Safety Score": b_score,
+                                "Buyable": "✅" if is_buy else "❌"
                             })
                     if results:
                         res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
                         st.session_state["batch_results"] = res_df
                         st.sidebar.success("Scan Complete! View results below.")
         else:
-            st.sidebar.error("Could not find 'Ticker' or 'Symbol' column in CSV.")
+            st.sidebar.error("Could not find 'Name', 'Ticker', or 'Symbol' column in CSV.")
     except Exception as e:
         st.sidebar.error(f"Error processing CSV: {e}")
 
@@ -427,22 +445,46 @@ st.title("📈 Stock Market Analysis Dashboard")
 
 col_sym, col_exch = st.columns([7, 3])
 with col_sym:
-    raw_symbol = st.text_input(
-        "Stock Symbol",
+    search_query = st.text_input(
+        "Search Company Name or Ticker",
         value="",
-        placeholder="e.g., RELIANCE, TCS, INFY",
-        key="symbol_input",
+        placeholder="e.g., Narmada, RELIANCE, TCS",
+        key="search_input",
     )
 with col_exch:
     exchange = st.selectbox("Exchange", ["NSE", "BSE"])
 
-if not raw_symbol:
-    st.info("Enter a stock symbol above to get started.")
+if not search_query:
+    st.info("Enter a stock symbol to get started.")
     st.stop()
 
-ticker_suffix = ".NS" if exchange == "NSE" else ".BO"
-full_ticker = raw_symbol.strip().upper() + ticker_suffix
-display_label = f"{raw_symbol.strip().upper()} ({exchange})"
+search_term = search_query.strip()
+if search_term != st.session_state.get("last_search_query"):
+    st.session_state["last_search_query"] = search_term
+    st.session_state["search_results"] = []
+    try:
+        if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
+             st.session_state["search_results"] = [search_term.upper()]
+        else:
+            s_res = yf.Search(search_term, max_results=5).quotes
+            options = []
+            for q in s_res:
+                sym = q.get('symbol', '')
+                if sym.endswith(".NS") or sym.endswith(".BO") or exchange == "NSE":
+                    options.append(sym if (sym.endswith(".NS") or sym.endswith(".BO")) else sym + (".NS" if exchange == "NSE" else ".BO"))
+            if not options:
+                options = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
+            st.session_state["search_results"] = options
+    except Exception:
+        st.session_state["search_results"] = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
+
+options = st.session_state.get("search_results", [])
+if len(options) > 0:
+    full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
+else:
+    full_ticker = search_term.upper() + ".NS"
+
+display_label = full_ticker
 
 # ===================================================================
 # MAIN AREA — Data Fetch & Chart
@@ -460,27 +502,53 @@ if df.empty:
 df = compute_indicators(df)
 company_name = get_company_name(full_ticker)
 
-# --- Quick stats row ---
 latest = df.iloc[-1]
 prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
 day_change = latest["Close"] - prev_close
+day_change_pct = (day_change / prev_close) * 100
+support_val = df["Support_1"].iloc[-1]
+resistance_val = df["Resistance_1"].iloc[-1]
 week52_high = df["High"].max()
 week52_low = df["Low"].min()
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
-c2.metric("Day Change", f"₹{day_change:,.2f}", delta=f"{day_change:+,.2f}")
-c3.metric("52-Week High", f"₹{week52_high:,.2f}")
-c4.metric("52-Week Low", f"₹{week52_low:,.2f}")
+if st.session_state.get("sync_ticker") != full_ticker:
+    st.session_state["sync_ticker"] = full_ticker
+    st.session_state["entry_price_key"] = float(latest["Close"])
+    st.session_state["stop_loss_key"] = float(support_val)
+    st.rerun()
 
 # --- Batch Results View ---
 if "batch_results" in st.session_state:
     st.markdown("---")
     st.subheader("🔥 Watchlist Batch Results")
-    st.dataframe(
-        st.session_state["batch_results"].style.background_gradient(cmap="RdYlGn_r", subset=["Risk to Stop %"]),
+    edited_df = st.data_editor(
+        st.session_state["batch_results"],
+        hide_index=True,
         use_container_width=True
     )
+    st.session_state["batch_results"] = edited_df
+    
+    selected_rows = edited_df[edited_df["Select"] == True]
+    if not selected_rows.empty:
+        cap = st.session_state.get("capital_ext", 100000.0)
+        export_list = []
+        for _, row in selected_rows.iterrows():
+            ep = row["Price"]
+            sl = row["Support1"]
+            shares = math.floor((cap * 0.01) / (ep - sl)) if ep > sl else 0
+            export_list.append({
+                "Ticker": row["Ticker"],
+                "Entry Price": ep,
+                "Stop Loss": sl,
+                "Shares to Buy": shares
+            })
+            
+        st.download_button(
+            label="⬇️ Download Trade Plan",
+            data=pd.DataFrame(export_list).to_csv(index=False),
+            file_name="Batch_Trade_Plan.csv",
+            mime="text/csv",
+        )
 
 # --- Visual Scoring (Gauge) ---
 c_gauge, c_empty = st.columns([1, 1])
@@ -514,6 +582,12 @@ with c_gauge:
     ))
     gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
     st.plotly_chart(gauge_fig, use_container_width=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
+    c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
+    c3.metric("Support (S1)", f"₹{support_val:,.2f}")
+    c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
 
 # --- Earnings Warning ---
 earnings_date = check_earnings(full_ticker)

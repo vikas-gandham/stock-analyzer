@@ -308,21 +308,111 @@ def get_company_name(ticker: str) -> str:
     except Exception:
         return ticker
 
+# ===================================================================
+# INITIALIZE SESSION STATE
+# ===================================================================
+if "entry_price_key" not in st.session_state:
+    st.session_state["entry_price_key"] = 100.0
+if "stop_loss_key" not in st.session_state:
+    st.session_state["stop_loss_key"] = 95.0
+if "capital_key" not in st.session_state:
+    st.session_state["capital_key"] = 100000.0
+if "sync_ticker" not in st.session_state:
+    st.session_state["sync_ticker"] = None
+if "last_search_query" not in st.session_state:
+    st.session_state["last_search_query"] = ""
+if "search_results" not in st.session_state:
+    st.session_state["search_results"] = []
 
 # ===================================================================
-# SIDEBAR — 1% Risk Calculator + Gemini Key
+# TOP SECTION — Search & Ticker Selection
+# ===================================================================
+st.title("📈 Stock Market Analysis Dashboard")
+
+col_sym, col_exch = st.columns([7, 3])
+with col_sym:
+    search_query = st.text_input(
+        "Search Company Name or Ticker",
+        value="",
+        placeholder="e.g., Narmada, RELIANCE, TCS",
+        key="search_input",
+    )
+with col_exch:
+    exchange = st.selectbox("Exchange", ["NSE", "BSE"])
+
+if not search_query:
+    st.info("Enter a stock symbol to get started.")
+    st.stop()
+
+search_term = search_query.strip()
+if search_term != st.session_state["last_search_query"]:
+    st.session_state["last_search_query"] = search_term
+    st.session_state["search_results"] = []
+    try:
+        if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
+             st.session_state["search_results"] = [search_term.upper()]
+        else:
+            s_res = yf.Search(search_term, max_results=5).quotes
+            options = []
+            for q in s_res:
+                sym = q.get('symbol', '')
+                if sym.endswith(".NS") or sym.endswith(".BO") or exchange == "NSE":
+                    options.append(sym if (sym.endswith(".NS") or sym.endswith(".BO")) else sym + (".NS" if exchange == "NSE" else ".BO"))
+            if not options:
+                options = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
+            st.session_state["search_results"] = options
+    except Exception:
+        st.session_state["search_results"] = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
+
+options = st.session_state["search_results"]
+if len(options) > 1 and search_term.upper() not in [o.upper() for o in options] and not search_term.upper().endswith(".NS"):
+    full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
+else:
+    full_ticker = options[0] if options else search_term.upper() + ".NS"
+
+display_label = full_ticker
+
+# ===================================================================
+# FETCH DATA & SILENT SYNC
+# ===================================================================
+with st.spinner("Fetching market data..."):
+    df = fetch_ohlcv(full_ticker)
+
+if df.empty or len(df) < 50:
+    st.info(f"Not enough market data found for **{full_ticker}**. Please verify the symbol.")
+    st.stop()
+
+df = compute_indicators(df)
+company_name = get_company_name(full_ticker)
+
+try:
+    latest = df.iloc[-1]
+    prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
+    day_change = latest["Close"] - prev_close
+    day_change_pct = (day_change / prev_close) * 100
+    support_val = df["Support_1"].iloc[-1]
+    resistance_val = df["Resistance_1"].iloc[-1]
+    week52_high = df["High"].max()
+    week52_low = df["Low"].min()
+except (IndexError, KeyError) as e:
+    st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
+    st.stop()
+
+if st.session_state["sync_ticker"] != full_ticker:
+    st.session_state["sync_ticker"] = full_ticker
+    st.session_state["entry_price_key"] = float(latest["Close"])
+    st.session_state["stop_loss_key"] = float(support_val)
+    # Silent Sync: Values update in session_state before sidebar renders below
+
+# ===================================================================
+# SIDEBAR — 1% Risk Calculator + Gemini Key + Batch Processor
 # ===================================================================
 st.sidebar.title("📐 1% Risk Calculator")
 st.sidebar.divider()
 st.sidebar.markdown("_Never risk more than 1% of your capital on a single trade._")
 
-if "entry_price_key" not in st.session_state:
-    st.session_state["entry_price_key"] = 100.0
-if "stop_loss_key" not in st.session_state:
-    st.session_state["stop_loss_key"] = 95.0
-
 capital = st.sidebar.number_input(
-    "Total Account Capital (₹)", min_value=0.0, value=100000.0, step=10000.0, key="capital_key"
+    "Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key"
 )
 st.session_state["capital_ext"] = capital
 
@@ -392,28 +482,31 @@ if watchlist_file is not None:
                         b_df = fetch_ohlcv(batch_ticker)
                         if not b_df.empty and len(b_df) > 50:
                             b_df = compute_indicators(b_df)
-                            b_close = b_df["Close"].iloc[-1]
-                            b_sup1 = b_df["Support_1"].iloc[-1]
-                            b_res1 = b_df["Resistance_1"].iloc[-1]
-                            
-                            risk_pct = ((b_close - b_sup1) / b_close) * 100
-                            if b_res1 > b_sup1:
-                                raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
-                                b_score = max(0, min(100, int(raw_s)))
-                            else:
-                                b_score = 50
+                            try:
+                                b_close = b_df["Close"].iloc[-1]
+                                b_sup1 = b_df["Support_1"].iloc[-1]
+                                b_res1 = b_df["Resistance_1"].iloc[-1]
                                 
-                            is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
-                                
-                            results.append({
-                                "Select": False,
-                                "Ticker": t_sym,
-                                "Price": round(b_close, 2),
-                                "Support1": round(b_sup1, 2),
-                                "Risk to Stop %": round(risk_pct, 2),
-                                "Safety Score": b_score,
-                                "Buyable": "✅" if is_buy else "❌"
-                            })
+                                risk_pct = ((b_close - b_sup1) / b_close) * 100
+                                if b_res1 > b_sup1:
+                                    raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                    b_score = max(0, min(100, int(raw_s)))
+                                else:
+                                    b_score = 50
+                                    
+                                is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
+                                    
+                                results.append({
+                                    "Select": False,
+                                    "Ticker": t_sym,
+                                    "Price": round(b_close, 2),
+                                    "Support1": round(b_sup1, 2),
+                                    "Risk to Stop %": round(risk_pct, 2),
+                                    "Safety Score": b_score,
+                                    "Buyable": "✅" if is_buy else "❌"
+                                })
+                            except (IndexError, KeyError):
+                                pass
                     if results:
                         res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
                         st.session_state["batch_results"] = res_df
@@ -439,83 +532,8 @@ except (KeyError, FileNotFoundError):
     )
 
 # ===================================================================
-# MAIN AREA — Top Section
+# MAIN AREA — Visuals
 # ===================================================================
-st.title("📈 Stock Market Analysis Dashboard")
-
-col_sym, col_exch = st.columns([7, 3])
-with col_sym:
-    search_query = st.text_input(
-        "Search Company Name or Ticker",
-        value="",
-        placeholder="e.g., Narmada, RELIANCE, TCS",
-        key="search_input",
-    )
-with col_exch:
-    exchange = st.selectbox("Exchange", ["NSE", "BSE"])
-
-if not search_query:
-    st.info("Enter a stock symbol to get started.")
-    st.stop()
-
-search_term = search_query.strip()
-if search_term != st.session_state.get("last_search_query"):
-    st.session_state["last_search_query"] = search_term
-    st.session_state["search_results"] = []
-    try:
-        if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
-             st.session_state["search_results"] = [search_term.upper()]
-        else:
-            s_res = yf.Search(search_term, max_results=5).quotes
-            options = []
-            for q in s_res:
-                sym = q.get('symbol', '')
-                if sym.endswith(".NS") or sym.endswith(".BO") or exchange == "NSE":
-                    options.append(sym if (sym.endswith(".NS") or sym.endswith(".BO")) else sym + (".NS" if exchange == "NSE" else ".BO"))
-            if not options:
-                options = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
-            st.session_state["search_results"] = options
-    except Exception:
-        st.session_state["search_results"] = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
-
-options = st.session_state.get("search_results", [])
-if len(options) > 0:
-    full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
-else:
-    full_ticker = search_term.upper() + ".NS"
-
-display_label = full_ticker
-
-# ===================================================================
-# MAIN AREA — Data Fetch & Chart
-# ===================================================================
-with st.spinner("Fetching market data..."):
-    df = fetch_ohlcv(full_ticker)
-
-if df.empty:
-    st.error(
-        f"No data found for **{full_ticker}**. "
-        "Please verify the stock symbol and exchange selection."
-    )
-    st.stop()
-
-df = compute_indicators(df)
-company_name = get_company_name(full_ticker)
-
-latest = df.iloc[-1]
-prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
-day_change = latest["Close"] - prev_close
-day_change_pct = (day_change / prev_close) * 100
-support_val = df["Support_1"].iloc[-1]
-resistance_val = df["Resistance_1"].iloc[-1]
-week52_high = df["High"].max()
-week52_low = df["Low"].min()
-
-if st.session_state.get("sync_ticker") != full_ticker:
-    st.session_state["sync_ticker"] = full_ticker
-    st.session_state["entry_price_key"] = float(latest["Close"])
-    st.session_state["stop_loss_key"] = float(support_val)
-    st.rerun()
 
 # --- Batch Results View ---
 if "batch_results" in st.session_state:
@@ -550,11 +568,9 @@ if "batch_results" in st.session_state:
             mime="text/csv",
         )
 
-# --- Visual Scoring (Gauge) ---
+# --- Visual Scoring (Gauge) & Metrics ---
 c_gauge, c_empty = st.columns([1, 1])
 with c_gauge:
-    support_val = df["Support_1"].iloc[-1]
-    resistance_val = df["Resistance_1"].iloc[-1]
     current_price = latest["Close"]
     
     if resistance_val > support_val:

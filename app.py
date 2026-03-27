@@ -124,10 +124,10 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["ADX"] = 0
     df["Vol_20SMA"] = ta.sma(df["Volume"], length=20).fillna(1)
 
-    recent = df.tail(20)
-    pp_high = recent["High"].max()
-    pp_low = recent["Low"].min()
-    pp_close = recent["Close"].iloc[-1]
+    previous_window = df.iloc[-21:-1]
+    pp_high = previous_window["High"].max()
+    pp_low = previous_window["Low"].min()
+    pp_close = previous_window["Close"].iloc[-1]
 
     pivot = (pp_high + pp_low + pp_close) / 3
     support_1 = 2 * pivot - pp_high

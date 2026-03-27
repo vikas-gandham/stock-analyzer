@@ -54,6 +54,12 @@ st.markdown(
     <style>
     header[data-testid="stHeader"] {background-color: transparent !important;}
     [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="collapsedControl"] {
+        visibility: visible !important;
+        display: flex !important;
+        z-index: 9999 !important;
+        color: #00D4AA !important;
+    }
     footer {visibility: hidden;}
     #MainMenu {visibility: hidden;}
     .block-container {

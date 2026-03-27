@@ -304,6 +304,7 @@ def fetch_news(company_name: str) -> list[dict]:
         return []
 
 
+@st.cache_data(ttl=3600)
 def summarize_with_gemini(headlines: list[str], company: str, api_key: str) -> str:
     """Send headlines to Gemini and return a 3-bullet catalyst summary."""
     try:
@@ -731,14 +732,24 @@ if articles:
     headlines = [art.get("title", "") for art in articles if art.get("title")]
     if gemini_key and headlines:
         st.markdown("---")
-        with st.spinner("Generating AI catalyst summary..."):
-            summary = summarize_with_gemini(headlines, company_name, gemini_key)
-
         st.markdown("**🤖 AI-Powered Catalyst Summary**")
-        st.markdown(
-            f'<div class="story-section">{summary}</div>',
-            unsafe_allow_html=True,
-        )
+        
+        summary_key = f"ai_summary_{full_ticker}"
+        
+        if summary_key not in st.session_state:
+            st.session_state[summary_key] = None
+            
+        if st.session_state[summary_key] is None:
+            if st.button("Generate AI Catalyst Summary"):
+                with st.spinner("Generating AI catalyst summary..."):
+                    summary = summarize_with_gemini(headlines, company_name, gemini_key)
+                    st.session_state[summary_key] = summary
+                    st.rerun()
+        else:
+            st.markdown(
+                f'<div class="story-section">{st.session_state[summary_key]}</div>',
+                unsafe_allow_html=True,
+            )
     elif not gemini_key:
         st.info("Add your free Gemini API key in the sidebar to enable AI-powered catalyst summaries.")
 else:

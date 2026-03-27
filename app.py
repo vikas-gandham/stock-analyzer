@@ -1,4 +1,4 @@
-﻿"""
+"""
 Stock Market Analysis Dashboard
 A free, full-featured stock analysis tool for Indian markets (NSE/BSE).
 Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
@@ -507,16 +507,17 @@ def render_sidebar():
     st.sidebar.divider()
     st.sidebar.subheader("🤖 AI Settings")
 
-    gemini_key: str | None = None
+    api_key = None
     try:
-        gemini_key = st.secrets["GEMINI_API_KEY"]
+        api_key = st.secrets["GEMINI_API_KEY"]
         st.sidebar.success("Gemini key loaded from secrets.")
     except (KeyError, FileNotFoundError):
-        gemini_key = st.sidebar.text_input(
+        api_key = st.sidebar.text_input(
             "Gemini API Key",
             type="password",
             help="Get a free key at aistudio.google.com",
         )
+    st.session_state["gemini_key"] = api_key
 
 
 # ===================================================================
@@ -845,7 +846,8 @@ if articles:
 
     # AI Summary
     headlines = [art.get("title", "") for art in articles if art.get("title")]
-    if gemini_key and headlines:
+    saved_key = st.session_state.get("gemini_key")
+    if saved_key and headlines:
         st.markdown("---")
         st.markdown("**🤖 AI-Powered Catalyst Summary**")
         
@@ -857,7 +859,7 @@ if articles:
         if st.session_state[summary_key] is None:
             if st.button("Generate AI Catalyst Summary"):
                 with st.spinner("Generating AI catalyst summary..."):
-                    summary = summarize_with_gemini(headlines, company_name, gemini_key)
+                    summary = summarize_with_gemini(headlines, company_name, saved_key)
                     st.session_state[summary_key] = summary
                     st.rerun()
         else:
@@ -865,7 +867,7 @@ if articles:
                 f'<div class="story-section">{st.session_state[summary_key]}</div>',
                 unsafe_allow_html=True,
             )
-    elif not gemini_key:
+    elif not saved_key:
         st.info("Add your free Gemini API key in the sidebar to enable AI-powered catalyst summaries.")
 else:
     st.info("No recent news found.")

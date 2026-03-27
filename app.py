@@ -52,15 +52,35 @@ if "theme_light" not in st.session_state:
 st.markdown(
     """
     <style>
-    header {visibility: hidden;}
+    [data-testid="stToolbar"] {visibility: hidden;}
     footer {visibility: hidden;}
     #MainMenu {visibility: hidden;}
     .block-container {
         padding-top: 1.5rem;
     }
+    div[data-baseweb="input"] > div:focus-within {
+        border-color: #00D4AA !important;
+        box-shadow: 0 0 0 1px #00D4AA !important;
+    }
     [data-testid="stMetricValue"] {
         font-size: 1.8rem;
         font-weight: bold;
+    }
+    .icon-3d {
+        display: inline-block;
+        transform: scale(1.2);
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+        margin-right: 0.2rem;
+    }
+    .analyst-badge {
+        font-size: 0.9rem;
+        background-color: #333;
+        color: #fff;
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.5rem;
+        vertical-align: middle;
+        margin-left: 10px;
+        opacity: 0.8;
     }
     .earnings-warning {
         background: linear-gradient(135deg, #ff4b4b, #cc0000);
@@ -342,6 +362,15 @@ def get_company_name(ticker: str) -> str:
     except Exception:
         return ticker
 
+
+def get_analyst_rating(ticker: str) -> Optional[str]:
+    """Retrieve the recommendation key from yfinance."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("recommendationKey")
+    except Exception:
+        return None
+
 # ===================================================================
 # INITIALIZE SESSION STATE
 # ===================================================================
@@ -350,7 +379,7 @@ def get_company_name(ticker: str) -> str:
 # ===================================================================
 # TOP SECTION — Search & Ticker Selection
 # ===================================================================
-st.title("📈 Stock Market Analysis Dashboard")
+st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
@@ -413,6 +442,13 @@ if df.empty or len(df) < 50:
 
 df = compute_indicators(df)
 company_name = get_company_name(full_ticker)
+analyst_rec = get_analyst_rating(full_ticker)
+
+if analyst_rec:
+    analyst_str = str(analyst_rec).replace("_", " ").title()
+    st.markdown(f"<h3>{company_name} <span class='analyst-badge'>Analyst Consensus: {analyst_str}</span></h3>", unsafe_allow_html=True)
+else:
+    st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
 
 try:
     latest = df.iloc[-1]
@@ -610,13 +646,53 @@ if "batch_results" in st.session_state:
 
 # --- Visual Scoring (Gauge) & Metrics ---
 # --- Metrics Row ---
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
 c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
 c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
 c3.metric("Support (S1)", f"₹{support_val:,.2f}")
 c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
 c5.metric("52W High", f"₹{week52_high:,.2f}")
 c6.metric("52W Low", f"₹{week52_low:,.2f}")
+c7.metric("Entry Price (Sync)", f"₹{latest['Close']:,.2f}")
+c8.metric("Stop Loss (Sync)", f"₹{support_val:,.2f}")
+
+# --- Master Algorithmic Rating ---
+score = 0
+current_price_for_rating = latest["Close"]
+if resistance_val > support_val:
+    raw_s = ((current_price_for_rating - support_val) / (resistance_val - support_val)) * 100
+    s_score = max(0, min(100, int(raw_s)))
+else:
+    s_score = 50
+
+if s_score <= 30: score += 2
+elif s_score <= 60: score += 1
+
+adx_val_for_rating = latest.get("ADX", 0)
+if pd.isna(adx_val_for_rating): adx_val_for_rating = 0
+
+if adx_val_for_rating >= 50: score += 2
+elif adx_val_for_rating >= 25: score += 1
+
+vol_td = latest.get("Volume", 1)
+vol_20s = latest.get("Vol_20SMA", 1)
+if pd.isna(vol_20s) or vol_20s == 0: vol_20s = 1
+v_ratio = vol_td / vol_20s
+
+if v_ratio >= 1.5: score += 2
+elif v_ratio >= 1.0: score += 1
+
+if score >= 5: master_rating, rating_color_hex = "STRONG BUY", "#00FF00"
+elif score >= 3: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
+elif score >= 1: master_rating, rating_color_hex = "HOLD", "#FFD700"
+else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
+
+rating_html = f'''
+<div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
+    <h2 style="margin: 0; color: {rating_color_hex}; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">MASTER ALGORITHMIC RATING: {master_rating}</h2>
+</div>
+'''
+st.markdown(rating_html, unsafe_allow_html=True)
 
 # --- Visual Scoring (Gauge & Momentum) ---
 c_gauge, c_mom = st.columns([1, 1])
@@ -634,9 +710,12 @@ with c_gauge:
     else:
         safe_score = 50
 
+    gauge_num_color = "#00FF00" if safe_score <= 30 else "#FFD700" if safe_score <= 60 else "#FF4B4B"
+
     gauge_fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=safe_score,
+        number={'font': {'color': gauge_num_color}},
         domain={'x': [0, 1], 'y': [0, 1]},
         title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': text_clr}},
         gauge={
@@ -654,6 +733,10 @@ with c_gauge:
     gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
     st.plotly_chart(gauge_fig, use_container_width=True)
     st.markdown("<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: #00FF00;'>0-30: Safe Entry</span> | <span style='color: #FFFF00;'>31-60: Fair</span> | <span style='color: #FF0000;'>61-100: Overextended</span></p>", unsafe_allow_html=True)
+    
+    vol_today_raw = latest.get("Volume", 1)
+    vol_20sma_raw = latest.get("Vol_20SMA", 1)
+    st.markdown(f"<p style='text-align: center; font-size: 1.0em; color: {text_clr};'>Current Vol: <strong>{int(vol_today_raw):,}</strong> | 20-Day Avg: <strong>{int(vol_20sma_raw):,}</strong></p>", unsafe_allow_html=True)
 
 with c_mom:
     vol_today = latest.get("Volume", 1)
@@ -666,9 +749,12 @@ with c_mom:
     if pd.isna(adx_val):
         adx_val = 0
         
+    adx_num_color = "#FF4B4B" if adx_val <= 25 else "#00D4AA" if adx_val <= 50 else "#00FF00"
+        
     adx_fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=adx_val,
+        number={'font': {'color': adx_num_color}},
         domain={'x': [0, 1], 'y': [0, 1]},
         title={'text': "Trend Strength (ADX)", 'font': {'size': 20, 'color': text_clr}},
         gauge={
@@ -686,11 +772,16 @@ with c_mom:
     adx_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
     st.plotly_chart(adx_fig, use_container_width=True)
     
-    st.markdown("<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: gray;'>0-25: Weak</span> | <span style='color: green;'>25-50: Strong</span> | <span style='color: darkgreen;'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
+    weak_clr = "#AAAAAA" if is_light else "gray"
+    strong_clr = "#00B050" if is_light else "green"
+    vstrong_clr = "#006400" if is_light else "darkgreen"
+
+    st.markdown(f"<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: {weak_clr};'>0-25: Weak</span> | <span style='color: {strong_clr};'>25-50: Strong</span> | <span style='color: {vstrong_clr};'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
     
-    vol_text = f"📈 **Volume:** {vol_ratio:.2f}x Avg"
+    vol_text = f"<span class='icon-3d'>📈</span> **Volume:** {vol_ratio:.2f}x Avg"
     if vol_ratio > 2.0:
-        vol_text += " <span style='color: #00FF00;'>(Institutional Surge)</span>"
+        surge_clr = "#00B050" if is_light else "#00FF00"
+        vol_text += f" <span style='color: {surge_clr};'>(Institutional Surge)</span>"
     st.markdown(f"<p style='text-align: center; font-size: 1.1em; margin-top: 10px;'>{vol_text}</p>", unsafe_allow_html=True)
 
 # --- Earnings Warning ---
@@ -699,7 +790,7 @@ if earnings_date:
     formatted_date = earnings_date.strftime("%d %b %Y")
     st.markdown(
         f'<div class="earnings-warning">'
-        f"🚨 EARNINGS ALERT: {company_name} reports earnings on {formatted_date}! "
+        f"<span class='icon-3d'>🚨</span> EARNINGS ALERT: {company_name} reports earnings on {formatted_date}! "
         f"Trade with extreme caution — expect high volatility."
         f"</div>",
         unsafe_allow_html=True,

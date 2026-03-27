@@ -382,6 +382,10 @@ if search_term != st.session_state["last_search_query"]:
                     options.append(sym + ".NS")
             if not options:
                 options = [search_term.upper() + ".NS"]
+                
+            # Prioritize NSE (.NS) tickers over BSE (.BO)
+            options.sort(key=lambda x: 0 if x.endswith(".NS") else 1)
+            
             st.session_state["search_results"] = options
     except Exception:
         st.session_state["search_results"] = [search_term.upper() + ".NS"]

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Stock Market Analysis Dashboard
 A free, full-featured stock analysis tool for Indian markets (NSE/BSE).
 Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
@@ -378,108 +378,6 @@ def get_analyst_rating(ticker: str) -> Optional[str]:
 # INITIALIZE SESSION STATE (Moved to top level file)
 
 # ===================================================================
-# TOP SECTION — Search & Ticker Selection
-# ===================================================================
-st.title("📈 Stock Market Analysis Dashboard")
-
-col_sym, col_tick = st.columns([7, 3])
-with col_sym:
-    search_query = st.text_input(
-        "Search Company Name or Ticker",
-        value="",
-        placeholder="e.g., Narmada, RELIANCE, TCS",
-        key="search_input",
-    )
-
-if not search_query:
-    st.info("Enter a stock symbol to get started.")
-    st.stop()
-
-search_term = search_query.strip()
-if search_term != st.session_state["last_search_query"]:
-    st.session_state["last_search_query"] = search_term
-    st.session_state["search_results"] = []
-    try:
-        if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
-             st.session_state["search_results"] = [search_term.upper()]
-        else:
-            s_res = yf.Search(search_term, max_results=8).quotes
-            options = []
-            for q in s_res:
-                sym = q.get('symbol', '')
-                exch = str(q.get('exchange', '')).upper()
-                if not sym: continue
-                if sym.endswith(".NS") or sym.endswith(".BO"):
-                    options.append(sym)
-                elif exch in ["NSI", "NSE"]:
-                    options.append(sym + ".NS")
-                elif exch in ["BSE", "BOM"]:
-                    options.append(sym + ".BO")
-                else: 
-                    options.append(sym + ".NS")
-            if not options:
-                options = [search_term.upper() + ".NS"]
-                
-            # Prioritize NSE (.NS) tickers
-            options.sort(key=lambda x: 0 if x.endswith(".NS") else 1)
-            
-            # Remove any duplicates while preserving order
-            options = list(dict.fromkeys(options))
-            
-            st.session_state["search_results"] = options
-    except Exception:
-        st.session_state["search_results"] = [search_term.upper() + ".NS"]
-
-options = st.session_state["search_results"]
-
-with col_tick:
-    if len(options) > 0:
-        full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
-    else:
-        full_ticker = search_term.upper() + ".NS"
-
-display_label = full_ticker
-
-# ===================================================================
-# FETCH DATA & SILENT SYNC
-# ===================================================================
-with st.spinner("Fetching market data..."):
-    df = fetch_ohlcv(full_ticker)
-
-if df.empty or len(df) < 50:
-    st.info(f"Not enough market data found for **{full_ticker}**. Please verify the symbol.")
-    st.stop()
-
-df = compute_indicators(df)
-company_name = get_company_name(full_ticker)
-analyst_rec = get_analyst_rating(full_ticker)
-
-if analyst_rec:
-    analyst_str = str(analyst_rec).replace("_", " ").title()
-    st.markdown(f"<h3>{company_name} <span class='analyst-badge'>Analyst Consensus: {analyst_str}</span></h3>", unsafe_allow_html=True)
-else:
-    st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
-
-try:
-    latest = df.iloc[-1]
-    prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
-    day_change = latest["Close"] - prev_close
-    day_change_pct = (day_change / prev_close) * 100
-    support_val = df["Support_1"].iloc[-1]
-    resistance_val = df["Resistance_1"].iloc[-1]
-    week52_high = df["High"].max()
-    week52_low = df["Low"].min()
-except (IndexError, KeyError) as e:
-    st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
-    st.stop()
-
-if st.session_state["sync_ticker"] != full_ticker:
-    st.session_state["sync_ticker"] = full_ticker
-    st.session_state["entry_price_key"] = float(latest["Close"])
-    st.session_state["stop_loss_key"] = float(support_val)
-    # Silent Sync: Values update in session_state before sidebar renders below
-
-# ===================================================================
 # SIDEBAR — 1% Risk Calculator + Gemini Key + Batch Processor
 # ===================================================================
 if "theme_light" not in st.session_state:
@@ -616,6 +514,108 @@ except (KeyError, FileNotFoundError):
         type="password",
         help="Get a free key at aistudio.google.com",
     )
+
+# ===================================================================
+# TOP SECTION — Search & Ticker Selection
+# ===================================================================
+st.title("📈 Stock Market Analysis Dashboard")
+
+col_sym, col_tick = st.columns([7, 3])
+with col_sym:
+    search_query = st.text_input(
+        "Search Company Name or Ticker",
+        value="",
+        placeholder="e.g., Narmada, RELIANCE, TCS",
+        key="search_input",
+    )
+
+if not search_query:
+    st.info("Enter a stock symbol to get started.")
+    st.stop()
+
+search_term = search_query.strip()
+if search_term != st.session_state["last_search_query"]:
+    st.session_state["last_search_query"] = search_term
+    st.session_state["search_results"] = []
+    try:
+        if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
+             st.session_state["search_results"] = [search_term.upper()]
+        else:
+            s_res = yf.Search(search_term, max_results=8).quotes
+            options = []
+            for q in s_res:
+                sym = q.get('symbol', '')
+                exch = str(q.get('exchange', '')).upper()
+                if not sym: continue
+                if sym.endswith(".NS") or sym.endswith(".BO"):
+                    options.append(sym)
+                elif exch in ["NSI", "NSE"]:
+                    options.append(sym + ".NS")
+                elif exch in ["BSE", "BOM"]:
+                    options.append(sym + ".BO")
+                else: 
+                    options.append(sym + ".NS")
+            if not options:
+                options = [search_term.upper() + ".NS"]
+                
+            # Prioritize NSE (.NS) tickers
+            options.sort(key=lambda x: 0 if x.endswith(".NS") else 1)
+            
+            # Remove any duplicates while preserving order
+            options = list(dict.fromkeys(options))
+            
+            st.session_state["search_results"] = options
+    except Exception:
+        st.session_state["search_results"] = [search_term.upper() + ".NS"]
+
+options = st.session_state["search_results"]
+
+with col_tick:
+    if len(options) > 0:
+        full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
+    else:
+        full_ticker = search_term.upper() + ".NS"
+
+display_label = full_ticker
+
+# ===================================================================
+# FETCH DATA & SILENT SYNC
+# ===================================================================
+with st.spinner("Fetching market data..."):
+    df = fetch_ohlcv(full_ticker)
+
+if df.empty or len(df) < 50:
+    st.info(f"Not enough market data found for **{full_ticker}**. Please verify the symbol.")
+    st.stop()
+
+df = compute_indicators(df)
+company_name = get_company_name(full_ticker)
+analyst_rec = get_analyst_rating(full_ticker)
+
+if analyst_rec:
+    analyst_str = str(analyst_rec).replace("_", " ").title()
+    st.markdown(f"<h3>{company_name} <span class='analyst-badge'>Analyst Consensus: {analyst_str}</span></h3>", unsafe_allow_html=True)
+else:
+    st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
+
+try:
+    latest = df.iloc[-1]
+    prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
+    day_change = latest["Close"] - prev_close
+    day_change_pct = (day_change / prev_close) * 100
+    support_val = df["Support_1"].iloc[-1]
+    resistance_val = df["Resistance_1"].iloc[-1]
+    week52_high = df["High"].max()
+    week52_low = df["Low"].min()
+except (IndexError, KeyError) as e:
+    st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
+    st.stop()
+
+if st.session_state["sync_ticker"] != full_ticker:
+    st.session_state["sync_ticker"] = full_ticker
+    st.session_state["entry_price_key"] = float(latest["Close"])
+    st.session_state["stop_loss_key"] = float(support_val)
+    st.rerun()  # Force rerun to instantly sync sidebar values
 
 # ===================================================================
 # MAIN AREA — Visuals

@@ -53,6 +53,11 @@ st.markdown(
     """
     <style>
     [data-testid="stToolbar"] {visibility: hidden;}
+    [data-testid="collapsedControl"] {
+        visibility: visible !important;
+        display: flex !important;
+        z-index: 9999 !important;
+    }
     footer {visibility: hidden;}
     #MainMenu {visibility: hidden;}
     .block-container {
@@ -402,19 +407,25 @@ if search_term != st.session_state["last_search_query"]:
         if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
              st.session_state["search_results"] = [search_term.upper()]
         else:
-            s_res = yf.Search(search_term, max_results=5).quotes
+            s_res = yf.Search(search_term, max_results=8).quotes
             options = []
             for q in s_res:
                 sym = q.get('symbol', '')
+                exch = q.get('exchange', '')
                 if sym.endswith(".NS") or sym.endswith(".BO"):
                     options.append(sym)
-                else:
+                elif exch == "NSI":
                     options.append(sym + ".NS")
+                elif exch == "BSE":
+                    options.append(sym + ".BO")
             if not options:
                 options = [search_term.upper() + ".NS"]
                 
-            # Prioritize NSE (.NS) tickers over BSE (.BO)
+            # Prioritize NSE (.NS) tickers
             options.sort(key=lambda x: 0 if x.endswith(".NS") else 1)
+            
+            # Remove any duplicates while preserving order
+            options = list(dict.fromkeys(options))
             
             st.session_state["search_results"] = options
     except Exception:

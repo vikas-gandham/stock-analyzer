@@ -52,12 +52,8 @@ if "theme_light" not in st.session_state:
 st.markdown(
     """
     <style>
-    [data-testid="stToolbar"] {visibility: hidden;}
-    [data-testid="collapsedControl"] {
-        visibility: visible !important;
-        display: flex !important;
-        z-index: 9999 !important;
-    }
+    header[data-testid="stHeader"] {background-color: transparent !important;}
+    [data-testid="stToolbar"] {display: none !important;}
     footer {visibility: hidden;}
     #MainMenu {visibility: hidden;}
     .block-container {
@@ -384,7 +380,7 @@ def get_analyst_rating(ticker: str) -> Optional[str]:
 # ===================================================================
 # TOP SECTION — Search & Ticker Selection
 # ===================================================================
-st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
+st.title("📈 Stock Market Analysis Dashboard")
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
@@ -411,13 +407,16 @@ if search_term != st.session_state["last_search_query"]:
             options = []
             for q in s_res:
                 sym = q.get('symbol', '')
-                exch = q.get('exchange', '')
+                exch = str(q.get('exchange', '')).upper()
+                if not sym: continue
                 if sym.endswith(".NS") or sym.endswith(".BO"):
                     options.append(sym)
-                elif exch == "NSI":
+                elif exch in ["NSI", "NSE"]:
                     options.append(sym + ".NS")
-                elif exch == "BSE":
+                elif exch in ["BSE", "BOM"]:
                     options.append(sym + ".BO")
+                else: 
+                    options.append(sym + ".NS")
             if not options:
                 options = [search_term.upper() + ".NS"]
                 
@@ -700,7 +699,7 @@ else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
 
 rating_html = f'''
 <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
-    <h2 style="margin: 0; color: {rating_color_hex}; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">MASTER ALGORITHMIC RATING: {master_rating}</h2>
+    <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex}; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">MASTER ALGORITHMIC RATING: {master_rating}</div>
 </div>
 '''
 st.markdown(rating_html, unsafe_allow_html=True)
@@ -789,7 +788,7 @@ with c_mom:
 
     st.markdown(f"<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: {weak_clr};'>0-25: Weak</span> | <span style='color: {strong_clr};'>25-50: Strong</span> | <span style='color: {vstrong_clr};'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
     
-    vol_text = f"<span class='icon-3d'>📈</span> **Volume:** {vol_ratio:.2f}x Avg"
+    vol_text = f"<span class='icon-3d'>📈</span> <b>Volume:</b> {vol_ratio:.2f}x Avg"
     if vol_ratio > 2.0:
         surge_clr = "#00B050" if is_light else "#00FF00"
         vol_text += f" <span style='color: {surge_clr};'>(Institutional Surge)</span>"

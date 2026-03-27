@@ -431,7 +431,6 @@ if st.session_state["sync_ticker"] != full_ticker:
 # ===================================================================
 # SIDEBAR — 1% Risk Calculator + Gemini Key + Batch Processor
 # ===================================================================
-st.sidebar.title("⚙️ Theme")
 if "theme_light" not in st.session_state:
     st.session_state["theme_light"] = False
 light_mode = st.sidebar.toggle("☀️ Light Mode", value=st.session_state["theme_light"], key="theme_toggle")
@@ -649,7 +648,7 @@ with c_gauge:
     ))
     gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
     st.plotly_chart(gauge_fig, use_container_width=True)
-    st.markdown(f"<p style='text-align: center; color: {'#555' if is_light else '#aaa'}; font-size: 0.9em; margin-top: -10px;'>0-30: Safe Entry | 31-60: Fair | 61-100: Overextended</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: #00FF00;'>0-30: Safe Entry</span> | <span style='color: #FFFF00;'>31-60: Fair</span> | <span style='color: #FF0000;'>61-100: Overextended</span></p>", unsafe_allow_html=True)
 
 with c_mom:
     vol_today = latest.get("Volume", 1)
@@ -659,30 +658,35 @@ with c_mom:
     vol_ratio = vol_today / vol_20sma
     
     adx_val = latest.get("ADX", 0)
-    adx_label = "⚡ Active Trend" if adx_val > 25 else "💤 Lazy Trend"
-    
-    bar_color = "#00FF00" if vol_ratio > 2.0 else "#00D4AA"
-    
-    mom_fig = go.Figure(go.Indicator(
-        mode="number+gauge",
-        value=vol_ratio,
-        title={'text': f"Momentum Intensity<br><span style='font-size:0.8em;color:gray'>ADX (14): {adx_val:.1f} ({adx_label})</span>", 'font': {'size': 20, 'color': text_clr}},
-        number={'suffix': "x Avg Vol"},
+    if pd.isna(adx_val):
+        adx_val = 0
+        
+    adx_fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=adx_val,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': "Trend Strength (ADX)", 'font': {'size': 20, 'color': text_clr}},
         gauge={
-            'shape': "bullet",
-            'axis': {'range': [None, max(3.0, vol_ratio + 0.5)]},
-            'bar': {'color': bar_color},
+            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': text_clr},
+            'bar': {'color': "#00D4AA"},
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 2,
+            'bordercolor': "gray",
             'steps': [
-                {'range': [0, 1], 'color': 'rgba(128, 128, 128, 0.1)'},
-                {'range': [1, 2], 'color': 'rgba(128, 128, 128, 0.2)'}],
-            'threshold': {
-                'line': {'color': "red", 'width': 2},
-                'thickness': 0.75,
-                'value': 2.0}
+                {'range': [0, 25], 'color': 'gray'},
+                {'range': [25, 50], 'color': 'green'},
+                {'range': [50, 100], 'color': 'darkgreen'}],
         }
     ))
-    mom_fig.update_layout(height=260, margin=dict(l=20, r=40, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
-    st.plotly_chart(mom_fig, use_container_width=True)
+    adx_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
+    st.plotly_chart(adx_fig, use_container_width=True)
+    
+    st.markdown("<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: gray;'>0-25: Weak</span> | <span style='color: green;'>25-50: Strong</span> | <span style='color: darkgreen;'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
+    
+    vol_text = f"📈 **Volume:** {vol_ratio:.2f}x Avg"
+    if vol_ratio > 2.0:
+        vol_text += " <span style='color: #00FF00;'>(Institutional Surge)</span>"
+    st.markdown(f"<p style='text-align: center; font-size: 1.1em; margin-top: 10px;'>{vol_text}</p>", unsafe_allow_html=True)
 
 # --- Earnings Warning ---
 earnings_date = check_earnings(full_ticker)

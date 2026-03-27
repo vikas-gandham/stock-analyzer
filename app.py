@@ -27,6 +27,26 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# INITIALIZE SESSION STATE
+# ---------------------------------------------------------------------------
+if "entry_price_key" not in st.session_state:
+    st.session_state["entry_price_key"] = 100.0
+if "stop_loss_key" not in st.session_state:
+    st.session_state["stop_loss_key"] = 95.0
+if "capital_key" not in st.session_state:
+    st.session_state["capital_key"] = 100000.0
+if "sync_ticker" not in st.session_state:
+    st.session_state["sync_ticker"] = None
+if "last_search_query" not in st.session_state:
+    st.session_state["last_search_query"] = ""
+if "search_results" not in st.session_state:
+    st.session_state["search_results"] = []
+if "capital_ext" not in st.session_state:
+    st.session_state["capital_ext"] = 100000.0
+if "theme_light" not in st.session_state:
+    st.session_state["theme_light"] = False
+
+# ---------------------------------------------------------------------------
 # Custom CSS
 # ---------------------------------------------------------------------------
 st.markdown(
@@ -95,6 +115,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["SMA_50"] = ta.sma(df["Close"], length=50)
     df["SMA_200"] = ta.sma(df["Close"], length=200)
+
+    # Momentum/Trend indicators
+    adx_df = ta.adx(df["High"], df["Low"], df["Close"], length=14)
+    if adx_df is not None and not adx_df.empty:
+        df["ADX"] = adx_df.iloc[:, 0]
+    else:
+        df["ADX"] = 0
+    df["Vol_20SMA"] = ta.sma(df["Volume"], length=20).fillna(1)
 
     recent = df.tail(20)
     pp_high = recent["High"].max()
@@ -239,11 +267,16 @@ def build_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     )
 
     # Layout
+    is_light = st.session_state.get("theme_light", False)
+    bg_color = "#FFFFFF" if is_light else "#0E1117"
+    text_color = "#000000" if is_light else "white"
+
     fig.update_layout(
-        title=dict(text=f"{symbol} — Daily Chart (1 Year)", font=dict(size=20)),
-        template="plotly_dark",
-        paper_bgcolor="#0E1117",
-        plot_bgcolor="#0E1117",
+        title=dict(text=f"{symbol} — Daily Chart (1 Year)", font=dict(size=20, color=text_color)),
+        template="plotly_white" if is_light else "plotly_dark",
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font=dict(color=text_color),
         height=660,
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -311,25 +344,14 @@ def get_company_name(ticker: str) -> str:
 # ===================================================================
 # INITIALIZE SESSION STATE
 # ===================================================================
-if "entry_price_key" not in st.session_state:
-    st.session_state["entry_price_key"] = 100.0
-if "stop_loss_key" not in st.session_state:
-    st.session_state["stop_loss_key"] = 95.0
-if "capital_key" not in st.session_state:
-    st.session_state["capital_key"] = 100000.0
-if "sync_ticker" not in st.session_state:
-    st.session_state["sync_ticker"] = None
-if "last_search_query" not in st.session_state:
-    st.session_state["last_search_query"] = ""
-if "search_results" not in st.session_state:
-    st.session_state["search_results"] = []
+# INITIALIZE SESSION STATE (Moved to top level file)
 
 # ===================================================================
 # TOP SECTION — Search & Ticker Selection
 # ===================================================================
 st.title("📈 Stock Market Analysis Dashboard")
 
-col_sym, col_exch = st.columns([7, 3])
+col_sym, col_tick = st.columns([7, 3])
 with col_sym:
     search_query = st.text_input(
         "Search Company Name or Ticker",
@@ -337,8 +359,6 @@ with col_sym:
         placeholder="e.g., Narmada, RELIANCE, TCS",
         key="search_input",
     )
-with col_exch:
-    exchange = st.selectbox("Exchange", ["NSE", "BSE"])
 
 if not search_query:
     st.info("Enter a stock symbol to get started.")
@@ -356,19 +376,23 @@ if search_term != st.session_state["last_search_query"]:
             options = []
             for q in s_res:
                 sym = q.get('symbol', '')
-                if sym.endswith(".NS") or sym.endswith(".BO") or exchange == "NSE":
-                    options.append(sym if (sym.endswith(".NS") or sym.endswith(".BO")) else sym + (".NS" if exchange == "NSE" else ".BO"))
+                if sym.endswith(".NS") or sym.endswith(".BO"):
+                    options.append(sym)
+                else:
+                    options.append(sym + ".NS")
             if not options:
-                options = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
+                options = [search_term.upper() + ".NS"]
             st.session_state["search_results"] = options
     except Exception:
-        st.session_state["search_results"] = [search_term.upper() + (".NS" if exchange == "NSE" else ".BO")]
+        st.session_state["search_results"] = [search_term.upper() + ".NS"]
 
 options = st.session_state["search_results"]
-if len(options) > 1 and search_term.upper() not in [o.upper() for o in options] and not search_term.upper().endswith(".NS"):
-    full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
-else:
-    full_ticker = options[0] if options else search_term.upper() + ".NS"
+
+with col_tick:
+    if len(options) > 0:
+        full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
+    else:
+        full_ticker = search_term.upper() + ".NS"
 
 display_label = full_ticker
 
@@ -407,6 +431,18 @@ if st.session_state["sync_ticker"] != full_ticker:
 # ===================================================================
 # SIDEBAR — 1% Risk Calculator + Gemini Key + Batch Processor
 # ===================================================================
+st.sidebar.title("⚙️ Theme")
+if "theme_light" not in st.session_state:
+    st.session_state["theme_light"] = False
+light_mode = st.sidebar.toggle("☀️ Light Mode", value=st.session_state["theme_light"], key="theme_toggle")
+if light_mode != st.session_state["theme_light"]:
+    st.session_state["theme_light"] = light_mode
+    import os
+    os.makedirs(".streamlit", exist_ok=True)
+    with open(".streamlit/config.toml", "w") as f:
+        f.write(f'[theme]\nbase="{"light" if light_mode else "dark"}"\n')
+    st.rerun()
+
 st.sidebar.title("📐 1% Risk Calculator")
 st.sidebar.divider()
 st.sidebar.markdown("_Never risk more than 1% of your capital on a single trade._")
@@ -503,7 +539,7 @@ if watchlist_file is not None:
                                     "Support1": round(b_sup1, 2),
                                     "Risk to Stop %": round(risk_pct, 2),
                                     "Safety Score": b_score,
-                                    "Buyable": "✅" if is_buy else "❌"
+                                    "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO"
                                 })
                             except (IndexError, KeyError):
                                 pass
@@ -569,12 +605,27 @@ if "batch_results" in st.session_state:
         )
 
 # --- Visual Scoring (Gauge) & Metrics ---
-c_gauge, c_empty = st.columns([1, 1])
+# --- Metrics Row ---
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
+c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
+c3.metric("Support (S1)", f"₹{support_val:,.2f}")
+c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
+c5.metric("52W High", f"₹{week52_high:,.2f}")
+c6.metric("52W Low", f"₹{week52_low:,.2f}")
+
+# --- Visual Scoring (Gauge & Momentum) ---
+c_gauge, c_mom = st.columns([1, 1])
+
+is_light = st.session_state.get("theme_light", False)
+text_clr = "black" if is_light else "white"
+
 with c_gauge:
     current_price = latest["Close"]
     
     if resistance_val > support_val:
-        raw_score = ((resistance_val - current_price) / (resistance_val - support_val)) * 100
+        # Lower score means closer to support (safer entry)
+        raw_score = ((current_price - support_val) / (resistance_val - support_val)) * 100
         safe_score = max(0, min(100, int(raw_score)))
     else:
         safe_score = 50
@@ -583,27 +634,55 @@ with c_gauge:
         mode="gauge+number",
         value=safe_score,
         domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Entry Safety Score", 'font': {'size': 20, 'color': 'white'}},
+        title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': text_clr}},
         gauge={
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': text_clr},
             'bar': {'color': "#00D4AA"},
             'bgcolor': "rgba(0,0,0,0)",
             'borderwidth': 2,
             'bordercolor': "gray",
             'steps': [
-                {'range': [0, 33], 'color': 'rgba(255, 75, 75, 0.3)'},
-                {'range': [33, 66], 'color': 'rgba(255, 215, 0, 0.3)'},
-                {'range': [66, 100], 'color': 'rgba(0, 212, 170, 0.3)'}],
+                {'range': [0, 30], 'color': 'rgba(0, 212, 170, 0.3)'},
+                {'range': [30, 60], 'color': 'rgba(255, 215, 0, 0.3)'},
+                {'range': [60, 100], 'color': 'rgba(255, 75, 75, 0.3)'}],
         }
     ))
-    gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+    gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
     st.plotly_chart(gauge_fig, use_container_width=True)
+    st.markdown(f"<p style='text-align: center; color: {'#555' if is_light else '#aaa'}; font-size: 0.9em; margin-top: -10px;'>0-30: Safe Entry | 31-60: Fair | 61-100: Overextended</p>", unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
-    c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
-    c3.metric("Support (S1)", f"₹{support_val:,.2f}")
-    c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
+with c_mom:
+    vol_today = latest.get("Volume", 1)
+    vol_20sma = latest.get("Vol_20SMA", 1)
+    if pd.isna(vol_20sma) or vol_20sma == 0:
+        vol_20sma = 1
+    vol_ratio = vol_today / vol_20sma
+    
+    adx_val = latest.get("ADX", 0)
+    adx_label = "⚡ Active Trend" if adx_val > 25 else "💤 Lazy Trend"
+    
+    bar_color = "#00FF00" if vol_ratio > 2.0 else "#00D4AA"
+    
+    mom_fig = go.Figure(go.Indicator(
+        mode="number+gauge",
+        value=vol_ratio,
+        title={'text': f"Momentum Intensity<br><span style='font-size:0.8em;color:gray'>ADX (14): {adx_val:.1f} ({adx_label})</span>", 'font': {'size': 20, 'color': text_clr}},
+        number={'suffix': "x Avg Vol"},
+        gauge={
+            'shape': "bullet",
+            'axis': {'range': [None, max(3.0, vol_ratio + 0.5)]},
+            'bar': {'color': bar_color},
+            'steps': [
+                {'range': [0, 1], 'color': 'rgba(128, 128, 128, 0.1)'},
+                {'range': [1, 2], 'color': 'rgba(128, 128, 128, 0.2)'}],
+            'threshold': {
+                'line': {'color': "red", 'width': 2},
+                'thickness': 0.75,
+                'value': 2.0}
+        }
+    ))
+    mom_fig.update_layout(height=260, margin=dict(l=20, r=40, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
+    st.plotly_chart(mom_fig, use_container_width=True)
 
 # --- Earnings Warning ---
 earnings_date = check_earnings(full_ticker)

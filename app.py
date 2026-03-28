@@ -530,22 +530,21 @@ def render_control_center():
                     with st.spinner("Scanning Watchlist (Top 50)..."):
                         results = []
                         for t in tickers_to_scan:
-                            if ticker_col.lower() == "name":
-                                try:
-                                    s_res = yf.Search(t, max_results=1).quotes
-                                    if s_res:
-                                        sym = s_res[0].get('symbol', '')
-                                        t_sym = sym if ".NS" in sym or ".BO" in sym else sym + ".NS"
-                                    else:
-                                        t_sym = t.strip().upper() + ".NS"
-                                except Exception:
-                                    t_sym = t.strip().upper() + ".NS"
-                            else:
-                                t_sym = t.strip().upper()
-                                if not t_sym.endswith(".NS") and not t_sym.endswith(".BO"):
-                                    t_sym += ".NS"
+                            # 1. Clean the name from the paste (remove S.No or extra spaces)
+                            clean_name = str(t).strip()
 
-                            batch_ticker = t_sym
+                            # 2. Try to find the actual Ticker using yfinance search
+                            try:
+                                search_results = yf.Search(clean_name, max_results=1).quotes
+                                if search_results:
+                                    # Grab the first result's symbol (e.g., 'ONGC.NS')
+                                    batch_ticker = search_results[0].get('symbol', clean_name.replace(" ", "").upper() + ".NS")
+                                else:
+                                    # Fallback to a guess if search fails
+                                    batch_ticker = clean_name.replace(" ", "").upper() + ".NS"
+                            except Exception:
+                                batch_ticker = clean_name.replace(" ", "").upper() + ".NS"
+
                             b_df = fetch_ohlcv(batch_ticker)
                             
                             if b_df.empty or len(b_df) < 50:

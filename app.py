@@ -434,25 +434,8 @@ def render_control_center():
             if st.button("Run Paste Scan", type="primary"):
                 if pasted_data:
                     try:
-                        # Read without headers to prevent immediate duplicate crash
-                        raw_df = pd.read_csv(io.StringIO(pasted_data), sep='\t', header=None)
-                        if not raw_df.empty:
-                            # Use first row as columns, force them to strings, make them unique
-                            cols = raw_df.iloc[0].astype(str).tolist()
-                            safe_cols = []
-                            seen = set()
-                            for c in cols:
-                                clean_c = c.strip()
-                                if clean_c in seen or clean_c == "" or clean_c.lower() == "nan":
-                                    i = 1
-                                    while f"Drop_{i}" in seen: i += 1
-                                    clean_c = f"Drop_{i}"
-                                safe_cols.append(clean_c)
-                                seen.add(clean_c)
-                            
-                            w_df = raw_df[1:].copy()
-                            w_df.columns = safe_cols
-                            run_scan = True
+                        w_df = pd.read_csv(io.StringIO(pasted_data), sep='\t')
+                        run_scan = True
                     except Exception as e:
                         st.error(f"Format error: {e}")
                 else:
@@ -475,6 +458,30 @@ def render_control_center():
 
         if run_scan and w_df is not None:
             try:
+                # PRO-GRADE SANITIZATION: Rebuild DataFrame by integer position to bypass all label/reindex errors
+                safe_df = pd.DataFrame()
+                seen = set()
+                
+                for i in range(w_df.shape[1]):
+                    raw_col_name = str(w_df.columns[i]).strip()
+                    
+                    # Generate a safe base name
+                    if not raw_col_name or raw_col_name.lower() == 'nan' or raw_col_name in seen:
+                        safe_name = f"Col_{i}"
+                    else:
+                        safe_name = raw_col_name
+                        
+                    # Ensure absolute uniqueness
+                    while safe_name in seen:
+                        safe_name += "_dup"
+                        
+                    seen.add(safe_name)
+                    # Extract data strictly by integer position, avoiding label lookups entirely
+                    safe_df[safe_name] = w_df.iloc[:, i].copy()
+                
+                # Replace the dirty dataframe with the pristine one
+                w_df = safe_df
+                
                 # Now safely find the ticker/name column
                 lower_cols = [c.lower() for c in w_df.columns]
                 ticker_col = None

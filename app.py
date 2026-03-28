@@ -462,43 +462,26 @@ def render_control_center():
 
         if run_scan and w_df is not None:
             try:
-                # PRO-GRADE SANITIZATION: Rebuild DataFrame by integer position to bypass all label/reindex errors
-                safe_df = pd.DataFrame()
-                seen = set()
+                # Reset index and force unique column names immediately
+                w_df = w_df.reset_index(drop=True)
+                w_df.columns = [f"col_{i}" if pd.isna(c) or str(c).strip() == "" else str(c).strip() for i, c in enumerate(w_df.columns)]
                 
-                for i in range(w_df.shape[1]):
-                    raw_col_name = str(w_df.columns[i]).strip()
-                    
-                    # Generate a safe base name
-                    if not raw_col_name or raw_col_name.lower() == 'nan' or raw_col_name in seen:
-                        safe_name = f"Col_{i}"
-                    else:
-                        safe_name = raw_col_name
-                        
-                    # Ensure absolute uniqueness
-                    while safe_name in seen:
-                        safe_name += "_dup"
-                        
-                    seen.add(safe_name)
-                    # Extract data strictly by integer position, avoiding label lookups entirely
-                    safe_df[safe_name] = w_df.iloc[:, i].copy()
-                
-                # Replace the dirty dataframe with the pristine one
-                w_df = safe_df
-                
-                # Now safely find the ticker/name column
-                lower_cols = [c.lower() for c in w_df.columns]
+                # Find the ticker column by checking lowercase names
                 ticker_col = None
-                for c, lc in zip(w_df.columns, lower_cols):
-                    if lc in ["ticker", "symbol", "name"]:
+                for c in w_df.columns:
+                    if c.lower() in ["ticker", "symbol", "name"]:
                         ticker_col = c
                         break
 
                 if ticker_col is not None:
+                    # EXTRACT ONLY THE TICKERS into a clean Python list 
+                    # This bypasses all further Pandas 'reindex' issues
+                    raw_tickers = w_df[ticker_col].dropna().astype(str).unique().tolist()
+                    tickers_to_scan = raw_tickers[:50] 
+
                     with st.spinner("Scanning Watchlist (Top 50)..."):
                         results = []
-                        tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
-                        for t in tickers:
+                        for t in tickers_to_scan:
                             if ticker_col.lower() == "name":
                                 try:
                                     s_res = yf.Search(t, max_results=1).quotes
@@ -516,56 +499,59 @@ def render_control_center():
 
                             batch_ticker = t_sym
                             b_df = fetch_ohlcv(batch_ticker)
-                            if not b_df.empty and len(b_df) > 50:
-                                b_df = compute_indicators(b_df)
-                                try:
-                                    b_close = b_df["Close"].iloc[-1]
-                                    b_sup1 = b_df["Support_1"].iloc[-1]
-                                    b_res1 = b_df["Resistance_1"].iloc[-1]
+                            
+                            if b_df.empty or len(b_df) < 50:
+                                continue
+                                
+                            b_df = compute_indicators(b_df)
+                            try:
+                                b_close = b_df["Close"].iloc[-1]
+                                b_sup1 = b_df["Support_1"].iloc[-1]
+                                b_res1 = b_df["Resistance_1"].iloc[-1]
 
-                                    risk_pct = ((b_close - b_sup1) / b_close) * 100
-                                    if b_res1 > b_sup1:
-                                        raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
-                                        b_score = max(0, min(100, int(raw_s)))
-                                    else:
-                                        b_score = 50
+                                risk_pct = ((b_close - b_sup1) / b_close) * 100
+                                if b_res1 > b_sup1:
+                                    raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                    b_score = max(0, min(100, int(raw_s)))
+                                else:
+                                    b_score = 50
 
-                                    is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
+                                is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
 
-                                    # Master Algorithmic Rating for Batch
-                                    m_score = 0
-                                    if b_score <= 30: m_score += 2
-                                    elif b_score <= 60: m_score += 1
-                                    
-                                    b_adx = b_df["ADX"].iloc[-1] if not pd.isna(b_df["ADX"].iloc[-1]) else 0
-                                    if b_adx >= 50: m_score += 2
-                                    elif b_adx >= 25: m_score += 1
-                                    
-                                    b_vol = b_df["Volume"].iloc[-1]
-                                    b_vol20 = b_df["Vol_20SMA"].iloc[-1]
-                                    if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
-                                    v_ratio = b_vol / b_vol20
-                                    
-                                    if v_ratio >= 1.5: m_score += 2
-                                    elif v_ratio >= 1.0: m_score += 1
-                                    
-                                    if m_score >= 5: m_rating = "🟢 STRONG BUY"
-                                    elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
-                                    elif m_score >= 1: m_rating = "🟡 HOLD"
-                                    else: m_rating = "🔴 AVOID"
+                                # Master Algorithmic Rating for Batch
+                                m_score = 0
+                                if b_score <= 30: m_score += 2
+                                elif b_score <= 60: m_score += 1
+                                
+                                b_adx = b_df["ADX"].iloc[-1] if not pd.isna(b_df["ADX"].iloc[-1]) else 0
+                                if b_adx >= 50: m_score += 2
+                                elif b_adx >= 25: m_score += 1
+                                
+                                b_vol = b_df["Volume"].iloc[-1]
+                                b_vol20 = b_df["Vol_20SMA"].iloc[-1]
+                                if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
+                                v_ratio = b_vol / b_vol20
+                                
+                                if v_ratio >= 1.5: m_score += 2
+                                elif v_ratio >= 1.0: m_score += 1
+                                
+                                if m_score >= 5: m_rating = "🟢 STRONG BUY"
+                                elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
+                                elif m_score >= 1: m_rating = "🟡 HOLD"
+                                else: m_rating = "🔴 AVOID"
 
-                                    results.append({
-                                        "Select": False,
-                                        "Ticker": t_sym,
-                                        "Price": round(b_close, 2),
-                                        "Support1": round(b_sup1, 2),
-                                        "Risk to Stop %": round(risk_pct, 2),
-                                        "Safety Score": b_score,
-                                        "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
-                                        "Master Rating": m_rating
-                                    })
-                                except (IndexError, KeyError):
-                                    pass
+                                results.append({
+                                    "Select": False,
+                                    "Ticker": t_sym,
+                                    "Price": round(b_close, 2),
+                                    "Support1": round(b_sup1, 2),
+                                    "Risk to Stop %": round(risk_pct, 2),
+                                    "Safety Score": b_score,
+                                    "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
+                                    "Master Rating": m_rating
+                                })
+                            except (IndexError, KeyError):
+                                pass
                         if results:
                             res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
                             st.session_state["batch_results"] = res_df

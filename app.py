@@ -379,145 +379,134 @@ def get_analyst_rating(ticker: str) -> Optional[str]:
         return None
 
 
-def render_sidebar():
-    # ===================================================================
-    # SIDEBAR — 1% Risk Calculator + Gemini Key + Batch Processor
-    # ===================================================================
-    if "theme_light" not in st.session_state:
-        st.session_state["theme_light"] = False
-    light_mode = st.sidebar.toggle("☀️ Light Mode", value=st.session_state["theme_light"], key="theme_toggle")
-    if light_mode != st.session_state["theme_light"]:
-        st.session_state["theme_light"] = light_mode
-        import os
-        os.makedirs(".streamlit", exist_ok=True)
-        with open(".streamlit/config.toml", "w") as f:
-            f.write(f'[theme]\nbase="{"light" if light_mode else "dark"}"\n')
-        st.rerun()
+def render_control_center():
+    st.markdown("---")
+    st.markdown("<h2>🛠️ Trading Tools & Batch Scanner</h2>", unsafe_allow_html=True)
+    col_calc, col_batch = st.columns(2)
+    
+    with col_calc:
+        st.subheader("📐 1% Risk Calculator")
+        st.markdown("_Never risk more than 1% of your capital on a single trade._")
 
-    st.sidebar.title("📐 1% Risk Calculator")
-    st.sidebar.divider()
-    st.sidebar.markdown("_Never risk more than 1% of your capital on a single trade._")
-
-    capital = st.sidebar.number_input(
-        "Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key"
-    )
-    st.session_state["capital_ext"] = capital
-
-    entry_price = st.sidebar.number_input(
-        "Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key"
-    )
-    stop_loss = st.sidebar.number_input(
-        "Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key"
-    )
-
-    if entry_price > stop_loss:
-        max_risk = capital * 0.01
-        risk_per_share = entry_price - stop_loss
-        shares_to_buy = math.floor(max_risk / risk_per_share)
-        total_deployed = shares_to_buy * entry_price
-
-        if shares_to_buy > 0:
-            st.sidebar.divider()
-            st.sidebar.subheader("📊 Position Size")
-            st.sidebar.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
-            st.sidebar.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
-            st.sidebar.metric("Shares to Buy", f"{shares_to_buy:,}")
-            st.sidebar.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
-            if total_deployed > capital:
-                st.sidebar.warning("⚠️ Position exceeds your total capital!")
-    else:
-        st.sidebar.error("Entry Price must be greater than Stop-Loss Price.")
-
-    # Batch Processor (Watchlist Upload)
-    st.sidebar.divider()
-    st.sidebar.subheader("📂 Batch Processor")
-    st.sidebar.markdown("_Upload a Screener.in CSV to rank setups._")
-    watchlist_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-    if watchlist_file is not None:
-        try:
-            w_df = pd.read_csv(watchlist_file)
-            w_df.columns = [str(c).strip() for c in w_df.columns]
-            lower_cols = [c.lower() for c in w_df.columns]
-            ticker_col = None
-            for c, lc in zip(w_df.columns, lower_cols):
-                if lc in ["ticker", "symbol", "name"]:
-                    ticker_col = c
-                    break
-
-            if ticker_col is not None:
-                if st.sidebar.button("Run Batch Scan"):
-                    with st.spinner("Scanning Watchlist (Top 50)..."):
-                        results = []
-                        tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
-                        for t in tickers:
-                            if ticker_col.lower() == "name":
-                                try:
-                                    s_res = yf.Search(t, max_results=1).quotes
-                                    if s_res:
-                                        sym = s_res[0].get('symbol', '')
-                                        t_sym = sym if ".NS" in sym or ".BO" in sym else sym + ".NS"
-                                    else:
-                                        t_sym = t.strip().upper() + ".NS"
-                                except Exception:
-                                    t_sym = t.strip().upper() + ".NS"
-                            else:
-                                t_sym = t.strip().upper()
-                                if not t_sym.endswith(".NS") and not t_sym.endswith(".BO"):
-                                    t_sym += ".NS"
-
-                            batch_ticker = t_sym
-                            b_df = fetch_ohlcv(batch_ticker)
-                            if not b_df.empty and len(b_df) > 50:
-                                b_df = compute_indicators(b_df)
-                                try:
-                                    b_close = b_df["Close"].iloc[-1]
-                                    b_sup1 = b_df["Support_1"].iloc[-1]
-                                    b_res1 = b_df["Resistance_1"].iloc[-1]
-
-                                    risk_pct = ((b_close - b_sup1) / b_close) * 100
-                                    if b_res1 > b_sup1:
-                                        raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
-                                        b_score = max(0, min(100, int(raw_s)))
-                                    else:
-                                        b_score = 50
-
-                                    is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
-
-                                    results.append({
-                                        "Select": False,
-                                        "Ticker": t_sym,
-                                        "Price": round(b_close, 2),
-                                        "Support1": round(b_sup1, 2),
-                                        "Risk to Stop %": round(risk_pct, 2),
-                                        "Safety Score": b_score,
-                                        "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO"
-                                    })
-                                except (IndexError, KeyError):
-                                    pass
-                        if results:
-                            res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
-                            st.session_state["batch_results"] = res_df
-                            st.sidebar.success("Scan Complete! View results below.")
-            else:
-                st.sidebar.error("Could not find 'Name', 'Ticker', or 'Symbol' column in CSV.")
-        except Exception as e:
-            st.sidebar.error(f"Error processing CSV: {e}")
-
-    # Gemini API Key
-    st.sidebar.divider()
-    st.sidebar.subheader("🤖 AI Settings")
-
-    api_key = None
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        st.sidebar.success("Gemini key loaded from secrets.")
-    except (KeyError, FileNotFoundError):
-        api_key = st.sidebar.text_input(
-            "Gemini API Key",
-            type="password",
-            help="Get a free key at aistudio.google.com",
+        capital = st.number_input(
+            "Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key"
         )
-    st.session_state["gemini_key"] = api_key
+        st.session_state["capital_ext"] = capital
+
+        entry_price = st.number_input(
+            "Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key"
+        )
+        stop_loss = st.number_input(
+            "Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key"
+        )
+
+        if entry_price > stop_loss:
+            max_risk = capital * 0.01
+            risk_per_share = entry_price - stop_loss
+            shares_to_buy = math.floor(max_risk / risk_per_share)
+            total_deployed = shares_to_buy * entry_price
+
+            if shares_to_buy > 0:
+                st.divider()
+                st.subheader("📊 Position Size")
+                st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
+                st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
+                st.metric("Shares to Buy", f"{shares_to_buy:,}")
+                st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                if total_deployed > capital:
+                    st.warning("⚠️ Position exceeds your total capital!")
+        else:
+            st.error("Entry Price must be greater than Stop-Loss Price.")
+
+    with col_batch:
+        st.subheader("📂 Batch Processor")
+        st.markdown("_Upload a Screener.in CSV to rank setups._")
+        watchlist_file = st.file_uploader("Upload CSV", type=["csv"])
+        if watchlist_file is not None:
+            try:
+                w_df = pd.read_csv(watchlist_file)
+                w_df.columns = [str(c).strip() for c in w_df.columns]
+                lower_cols = [c.lower() for c in w_df.columns]
+                ticker_col = None
+                for c, lc in zip(w_df.columns, lower_cols):
+                    if lc in ["ticker", "symbol", "name"]:
+                        ticker_col = c
+                        break
+
+                if ticker_col is not None:
+                    if st.button("Run Batch Scan"):
+                        with st.spinner("Scanning Watchlist (Top 50)..."):
+                            results = []
+                            tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
+                            for t in tickers:
+                                if ticker_col.lower() == "name":
+                                    try:
+                                        s_res = yf.Search(t, max_results=1).quotes
+                                        if s_res:
+                                            sym = s_res[0].get('symbol', '')
+                                            t_sym = sym if ".NS" in sym or ".BO" in sym else sym + ".NS"
+                                        else:
+                                            t_sym = t.strip().upper() + ".NS"
+                                    except Exception:
+                                        t_sym = t.strip().upper() + ".NS"
+                                else:
+                                    t_sym = t.strip().upper()
+                                    if not t_sym.endswith(".NS") and not t_sym.endswith(".BO"):
+                                        t_sym += ".NS"
+
+                                batch_ticker = t_sym
+                                b_df = fetch_ohlcv(batch_ticker)
+                                if not b_df.empty and len(b_df) > 50:
+                                    b_df = compute_indicators(b_df)
+                                    try:
+                                        b_close = b_df["Close"].iloc[-1]
+                                        b_sup1 = b_df["Support_1"].iloc[-1]
+                                        b_res1 = b_df["Resistance_1"].iloc[-1]
+
+                                        risk_pct = ((b_close - b_sup1) / b_close) * 100
+                                        if b_res1 > b_sup1:
+                                            raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                            b_score = max(0, min(100, int(raw_s)))
+                                        else:
+                                            b_score = 50
+
+                                        is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
+
+                                        results.append({
+                                            "Select": False,
+                                            "Ticker": t_sym,
+                                            "Price": round(b_close, 2),
+                                            "Support1": round(b_sup1, 2),
+                                            "Risk to Stop %": round(risk_pct, 2),
+                                            "Safety Score": b_score,
+                                            "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO"
+                                        })
+                                    except (IndexError, KeyError):
+                                        pass
+                            if results:
+                                res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
+                                st.session_state["batch_results"] = res_df
+                                st.success("Scan Complete! View results below.")
+                else:
+                    st.error("Could not find 'Name', 'Ticker', or 'Symbol' column in CSV.")
+            except Exception as e:
+                st.error(f"Error processing CSV: {e}")
+
+        # Gemini API Key
+        st.divider()
+        st.subheader("🤖 AI Settings")
+
+        api_key = None
+        try:
+            api_key = st.secrets["GEMINI_API_KEY"]
+            st.success("Gemini key loaded from secrets.")
+        except (KeyError, FileNotFoundError):
+            api_key = st.text_input(
+                "Gemini API Key",
+                type="password",
+                help="Get a free key at aistudio.google.com",
+            )
+        st.session_state["gemini_key"] = api_key
 
 
 # ===================================================================
@@ -528,7 +517,20 @@ def render_sidebar():
 # ===================================================================
 # TOP SECTION — Search & Ticker Selection
 # ===================================================================
-st.title("📈 Stock Market Analysis Dashboard")
+col_title, col_theme = st.columns([8, 2])
+with col_title:
+    st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
+with col_theme:
+    if "theme_light" not in st.session_state:
+        st.session_state["theme_light"] = False
+    light_mode = st.toggle("☀️ Light Mode", value=st.session_state["theme_light"], key="theme_toggle")
+    if light_mode != st.session_state["theme_light"]:
+        st.session_state["theme_light"] = light_mode
+        import os
+        os.makedirs(".streamlit", exist_ok=True)
+        with open(".streamlit/config.toml", "w") as f:
+            f.write(f'[theme]\nbase="{"light" if light_mode else "dark"}"\n')
+        st.rerun()
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
@@ -541,7 +543,6 @@ with col_sym:
 
 if not search_query:
     st.info("Enter a stock symbol to get started.")
-    render_sidebar()
     st.stop()
 
 search_term = search_query.strip()
@@ -597,7 +598,6 @@ with st.spinner("Fetching market data..."):
 
 if df.empty or len(df) < 50:
     st.info(f"Not enough market data found for **{full_ticker}**. Please verify the symbol.")
-    render_sidebar()
     st.stop()
 
 df = compute_indicators(df)
@@ -621,7 +621,6 @@ try:
     week52_low = df["Low"].min()
 except (IndexError, KeyError) as e:
     st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
-    render_sidebar()
     st.stop()
 
 if st.session_state["sync_ticker"] != full_ticker:
@@ -629,8 +628,6 @@ if st.session_state["sync_ticker"] != full_ticker:
     st.session_state["entry_price_key"] = float(latest["Close"])
     st.session_state["stop_loss_key"] = float(support_val)
     pass
-
-render_sidebar()
 
 # ===================================================================
 # MAIN AREA — Visuals
@@ -871,6 +868,8 @@ if articles:
         st.info("Add your free Gemini API key in the sidebar to enable AI-powered catalyst summaries.")
 else:
     st.info("No recent news found.")
+
+render_control_center()
 
 # ===================================================================
 # Footer

@@ -411,23 +411,110 @@ def render_control_center():
     
     # --- Row 1: Batch Processor (Full-Width) ---
     st.subheader("📂 Batch Processor")
-    tab1, tab2, tab3 = st.tabs(["📝 Quick Paste", "📁 Upload File", "💎 Elite Watchlist"])
+    tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
     
-    w_df = None
-    run_scan = False
-    
+    def run_batch_scan(w_df):
+        try:
+            # Force Column Strip
+            w_df.columns = [str(c).strip() for c in w_df.columns]
+            
+            # Find ticker column
+            search_terms = ["ticker", "symbol", "name", "company name", "stock", "identifier"]
+            ticker_col = next((c for c in w_df.columns if any(term in str(c).lower() for term in search_terms)), None)
+            
+            if ticker_col:
+                tickers_to_scan = w_df[ticker_col].dropna().astype(str).unique().tolist()[:50]
+
+                with st.spinner("Scanning Watchlist (Top 50)..."):
+                    st.session_state["batch_results"] = None
+                    results = []
+                    progress_text = st.empty()
+                    for i, t in enumerate(tickers_to_scan):
+                        progress_text.text(f"🔍 Scanning {i+1}/{len(tickers_to_scan)}: {t}...")
+                        clean_name = str(t).strip()
+                        
+                        try:
+                            s_res = yf.Search(clean_name, max_results=1).quotes
+                            if s_res:
+                                sym = s_res[0].get('symbol', '')
+                                t_sym = sym if (".NS" in sym or ".BO" in sym) else f"{sym}.NS"
+                            else:
+                                t_sym = clean_name.upper().replace(" ", "") + ".NS"
+                        except Exception:
+                            t_sym = clean_name.upper().replace(" ", "") + ".NS"
+
+                        b_df = fetch_ohlcv(t_sym)
+                        if b_df.empty or len(b_df) < 50:
+                            continue
+                            
+                        try:
+                            b_df = compute_indicators(b_df)
+                            b_close = b_df["Close"].iloc[-1]
+                            b_sup1 = b_df["Support_1"].iloc[-1]
+                            b_res1 = b_df["Resistance_1"].iloc[-1]
+                            risk_pct = ((b_close - b_sup1) / b_close) * 100
+                            
+                            if b_res1 > b_sup1:
+                                raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                b_score = max(0, min(100, int(raw_s)))
+                            else:
+                                b_score = 50
+
+                            is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
+                            m_score = 0
+                            if b_score <= 30: m_score += 2
+                            elif b_score <= 60: m_score += 1
+                            
+                            b_adx = b_df["ADX"].iloc[-1] if not pd.isna(b_df["ADX"].iloc[-1]) else 0
+                            if b_adx >= 50: m_score += 2
+                            elif b_adx >= 25: m_score += 1
+                            
+                            b_vol = b_df["Volume"].iloc[-1]
+                            b_vol20 = b_df["Vol_20SMA"].iloc[-1]
+                            if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
+                            v_ratio = b_vol / b_vol20
+                            
+                            if v_ratio >= 1.5: m_score += 2
+                            elif v_ratio >= 1.0: m_score += 1
+                            
+                            if m_score >= 5: m_rating = "🟢 STRONG BUY"
+                            elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
+                            elif m_score >= 1: m_rating = "🟡 HOLD"
+                            else: m_rating = "🔴 AVOID"
+
+                            results.append({
+                                "Select": False,
+                                "Ticker": t_sym,
+                                "Price": round(b_close, 2),
+                                "Support1": round(b_sup1, 2),
+                                "Risk to Stop %": round(risk_pct, 2),
+                                "Safety Score": b_score,
+                                "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
+                                "Master Rating": m_rating
+                            })
+                        except:
+                            continue
+                    
+                    progress_text.empty()
+                    if results:
+                        st.session_state["batch_results"] = pd.DataFrame(results).sort_values("Risk to Stop %")
+                        st.success(f"✅ Success: {len(results)} stocks matched your criteria.")
+                    else:
+                        st.error("❌ No stocks passed the scan.")
+            else:
+                st.error(f"Could not find a Ticker/Name column. Detected headers: {list(w_df.columns)}")
+        except Exception as e:
+            st.error(f"Error processing data: {e}")
+
     with tab1:
         st.markdown("_Highlight web tables, press Ctrl+C, and paste below._")
         pasted_data = st.text_area("Paste Web Table Here:", height=100, placeholder="Paste data here...")
         if st.button("Run Paste Scan", type="primary"):
             if pasted_data:
                 try:
-                    # Read as raw data without headers to prevent immediate Pandas crash
                     raw_data = pd.read_csv(io.StringIO(pasted_data), sep='\t', header=None)
                     if not raw_data.empty:
-                        # 1. Take the first row as headers
                         header_row = raw_data.iloc[0].astype(str).tolist()
-                        # 2. Generate unique names for every column manually
                         unique_headers = []
                         seen = {}
                         for h in header_row:
@@ -439,11 +526,10 @@ def render_control_center():
                                 seen[h_clean] = 0
                                 unique_headers.append(h_clean)
                         
-                        # 3. Reconstruct DF with data only (row 1 onwards) and clean headers
                         w_df = raw_data.iloc[1:].copy()
                         w_df.columns = unique_headers
                         w_df = w_df.reset_index(drop=True)
-                        run_scan = True
+                        run_batch_scan(w_df)
                 except Exception as e:
                     st.error(f"Format error: {e}")
             else:
@@ -474,143 +560,27 @@ def render_control_center():
                     w_df = raw_data.iloc[1:].copy()
                     w_df.columns = unique_headers
                     w_df = w_df.reset_index(drop=True)
-                    run_scan = True
+                    run_batch_scan(w_df)
                 except Exception as e:
                     st.error(f"File reading error: {e}")
             else:
                 st.warning("Please upload a file first.")
 
-    with tab3:
-        st.markdown("_Scan pre-selected high-beta & blue-chip Indian stocks._")
-        elite_tickers = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
-                         "ADANIENT.NS", "TATAMOTORS.NS", "SBIN.NS", "BHARTIARTL.NS", "AXISBANK.NS"]
-        if st.button("Run Elite Scan", type="primary"):
-            # Create a virtual DF for the batch processor to consume
-            w_df = pd.DataFrame({"Ticker": elite_tickers})
-            run_scan = True
-        
-        if run_scan and w_df is not None:
-            try:
-                # Force Column Strip (Ensure no invisible spaces)
-                w_df.columns = [str(c).strip() for c in w_df.columns]
-                
-                # Find ticker column with expanded search terms
-                search_terms = ["ticker", "symbol", "name", "company name", "stock", "identifier"]
-                ticker_col = next((c for c in w_df.columns if any(term in str(c).lower() for term in search_terms)), None)
-                
-                if ticker_col:
-                    tickers_to_scan = w_df[ticker_col].dropna().astype(str).unique().tolist()[:50]
+    # Gemini API Key
+    st.divider()
+    st.subheader("🤖 AI Settings")
 
-                    with st.spinner("Scanning Watchlist (Top 50)..."):
-                        # Clear old results to ensure persistence freshness
-                        st.session_state["batch_results"] = None
-                        results = []
-                        progress_text = st.empty()
-                        for i, t in enumerate(tickers_to_scan):
-                            progress_text.text(f"🔍 Scanning {i+1}/{len(tickers_to_scan)}: {t}...")
-                            # 1. Standardize variable name to 't_sym'
-                            clean_name = str(t).strip()
-                            
-                            # 2. PROXY SEARCH: Turn 'Aditya Vision' into 'ADITYAVISION.NS'
-                            try:
-                                s_res = yf.Search(clean_name, max_results=1).quotes
-                                if s_res:
-                                    sym = s_res[0].get('symbol', '')
-                                    # Ensure it has an Indian suffix
-                                    t_sym = sym if (".NS" in sym or ".BO" in sym) else f"{sym}.NS"
-                                else:
-                                    t_sym = clean_name.upper().replace(" ", "") + ".NS"
-                            except Exception:
-                                t_sym = clean_name.upper().replace(" ", "") + ".NS"
-
-                            # 3. Fetch and Compute using the corrected 't_sym'
-                            b_df = fetch_ohlcv(t_sym)
-                            
-                            if b_df.empty or len(b_df) < 50:
-                                continue
-                                
-                            try:
-                                b_df = compute_indicators(b_df)
-                            except:
-                                continue
-                            try:
-                                b_close = b_df["Close"].iloc[-1]
-                                b_sup1 = b_df["Support_1"].iloc[-1]
-                                b_res1 = b_df["Resistance_1"].iloc[-1]
-
-                                risk_pct = ((b_close - b_sup1) / b_close) * 100
-                                if b_res1 > b_sup1:
-                                    raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
-                                    b_score = max(0, min(100, int(raw_s)))
-                                else:
-                                    b_score = 50
-
-                                is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
-
-                                # Master Algorithmic Rating for Batch
-                                m_score = 0
-                                if b_score <= 30: m_score += 2
-                                elif b_score <= 60: m_score += 1
-                                
-                                b_adx = b_df["ADX"].iloc[-1] if not pd.isna(b_df["ADX"].iloc[-1]) else 0
-                                if b_adx >= 50: m_score += 2
-                                elif b_adx >= 25: m_score += 1
-                                
-                                b_vol = b_df["Volume"].iloc[-1]
-                                b_vol20 = b_df["Vol_20SMA"].iloc[-1]
-                                if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
-                                v_ratio = b_vol / b_vol20
-                                
-                                if v_ratio >= 1.5: m_score += 2
-                                elif v_ratio >= 1.0: m_score += 1
-                                
-                                if m_score >= 5: m_rating = "🟢 STRONG BUY"
-                                elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
-                                elif m_score >= 1: m_rating = "🟡 HOLD"
-                                else: m_rating = "🔴 AVOID"
-
-                                results.append({
-                                    "Select": False,
-                                    "Ticker": t_sym,
-                                    "Price": round(b_close, 2),
-                                    "Support1": round(b_sup1, 2),
-                                    "Risk to Stop %": round(risk_pct, 2),
-                                    "Safety Score": b_score,
-                                    "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
-                                    "Master Rating": m_rating
-                                })
-                            except (IndexError, KeyError):
-                                pass
-                        
-                        # Clear the progress bar after completion
-                        progress_text.empty()
-                        
-                        if results:
-                            st.session_state["batch_results"] = pd.DataFrame(results).sort_values("Risk to Stop %")
-                            st.success(f"✅ Success: {len(results)} stocks matched your 8-point criteria.")
-                        else:
-                            st.error("❌ No stocks passed the scan.")
-                            st.info("Possible reasons: 1. Tickers not found on Yahoo Finance. 2. Stocks didn't meet the 'Strong Buy' technical threshold. 3. Data is currently loading/glitching.")
-                else:
-                    st.error(f"Could not find a Ticker/Name column. Detected headers: {list(w_df.columns)}")
-            except Exception as e:
-                st.error(f"Error processing data: {e}")
-
-        # Gemini API Key
-        st.divider()
-        st.subheader("🤖 AI Settings")
-
-        api_key = None
-        try:
-            api_key = st.secrets["GEMINI_API_KEY"]
-            st.success("Gemini key loaded from secrets.")
-        except (KeyError, FileNotFoundError):
-            api_key = st.text_input(
-                "Gemini API Key",
-                type="password",
-                help="Get a free key at aistudio.google.com",
-            )
-        st.session_state["gemini_key"] = api_key
+    api_key = None
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        st.success("Gemini key loaded from secrets.")
+    except (KeyError, FileNotFoundError):
+        api_key = st.text_input(
+            "Gemini API Key",
+            type="password",
+            help="Get a free key at aistudio.google.com",
+        )
+    st.session_state["gemini_key"] = api_key
 
 
 # ===================================================================
@@ -737,38 +707,6 @@ if search_query:
 
             st.divider()
             
-            # --- 1% Risk Calculator (Decoupled & Synced) ---
-            st.subheader("📐 1% Risk Calculator")
-            st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
-            
-            if st.session_state["sync_ticker"] != full_ticker:
-                st.session_state["sync_ticker"] = full_ticker
-                st.session_state["entry_price_key"] = float(latest["Close"])
-                st.session_state["stop_loss_key"] = float(support_val)
-
-            col_input, col_pos = st.columns(2)
-            with col_input:
-                capital = st.number_input("Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key")
-                st.session_state["capital_ext"] = capital
-                entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
-                stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
-
-            with col_pos:
-                if entry_price > stop_loss:
-                    max_risk = capital * 0.01
-                    risk_per_share = entry_price - stop_loss
-                    shares_to_buy = math.floor(max_risk / risk_per_share)
-                    total_deployed = shares_to_buy * entry_price
-                    if shares_to_buy > 0:
-                        st.subheader("📊 Position Size")
-                        st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
-                        st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
-                        st.metric("Shares to Buy", f"{shares_to_buy:,}")
-                        st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
-                        if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
-                else: st.error("Entry Price must be greater than Stop-Loss Price.")
-
-            st.divider()
 
             # --- Metrics Row ---
             c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
@@ -860,6 +798,40 @@ if search_query:
                     else:
                         st.markdown(f'<div class="story-section">{st.session_state[summary_key]}</div>', unsafe_allow_html=True)
             else: st.info("No recent news found.")
+
+            st.divider()
+            # --- 1% Risk Calculator (Decoupled & Synced) ---
+            st.subheader("📐 1% Risk Calculator")
+            st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
+            
+            if st.session_state["sync_ticker"] != full_ticker:
+                st.session_state["sync_ticker"] = full_ticker
+                st.session_state["entry_price_key"] = float(latest["Close"])
+                st.session_state["stop_loss_key"] = float(support_val)
+
+            col_input, col_pos = st.columns(2)
+            with col_input:
+                capital = st.number_input("Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key")
+                st.session_state["capital_ext"] = capital
+                entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
+                stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
+
+            with col_pos:
+                if entry_price > stop_loss:
+                    max_risk = capital * 0.01
+                    risk_per_share = entry_price - stop_loss
+                    shares_to_buy = math.floor(max_risk / risk_per_share)
+                    total_deployed = shares_to_buy * entry_price
+                    if shares_to_buy > 0:
+                        st.subheader("📊 Position Size")
+                        st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
+                        st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
+                        st.metric("Shares to Buy", f"{shares_to_buy:,}")
+                        st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                        if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
+                else: st.error("Entry Price must be greater than Stop-Loss Price.")
+
+            st.divider()
 
         except (IndexError, KeyError) as e:
             st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")

@@ -639,6 +639,32 @@ if df.empty or len(df) < 50:
 
 df = compute_indicators(df)
 company_name = get_company_name(full_ticker)
+
+try:
+    with st.spinner("Fetching fundamentals..."):
+        info = yf.Ticker(full_ticker).info
+        roce = info.get("returnOnAssets")
+        if roce is None:
+            roce = info.get("returnOnCapitalEmployed", 0)
+            
+        if roce is not None:
+            roce = float(roce)
+            if roce < 2.0 and roce != 0.0:
+                roce *= 100
+        else:
+            roce = 0.0
+
+        debt_to_equity = info.get("debtToEquity", 0)
+        if debt_to_equity is not None:
+            debt_to_equity = float(debt_to_equity)
+            if debt_to_equity > 5.0:
+                debt_to_equity /= 100
+        else:
+            debt_to_equity = 0.0
+except Exception:
+    roce = 0.0
+    debt_to_equity = 0.0
+
 analyst_rec = get_analyst_rating(full_ticker)
 
 if analyst_rec:
@@ -741,10 +767,13 @@ v_ratio = vol_td / vol_20s
 if v_ratio >= 1.5: score += 2
 elif v_ratio >= 1.0: score += 1
 
-if score >= 5: master_rating, rating_color_hex = "STRONG BUY", "#00FF00"
-elif score >= 3: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
-elif score >= 1: master_rating, rating_color_hex = "HOLD", "#FFD700"
-else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
+if roce > 15: score += 1
+if debt_to_equity < 0.5: score += 1
+
+if score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
+elif score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
+elif score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
+else: master_rating, rating_color_hex = "AVOID (Weak Fundamentals/Trend)", "#FF4B4B"
 
 rating_html = f'''
 <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
@@ -857,6 +886,14 @@ if earnings_date:
 # --- Chart ---
 fig = build_chart(df, display_label)
 st.plotly_chart(fig, use_container_width=True)
+
+# --- Health Card ---
+hc1, hc2 = st.columns(2)
+with hc1:
+    st.markdown(f"<div style='text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;'><b>ROCE (Proxy)</b><br><span style='font-size: 1.2em; color: #00D4AA;'>{roce:.2f}%</span></div>", unsafe_allow_html=True)
+with hc2:
+    st.markdown(f"<div style='text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;'><b>Debt to Equity</b><br><span style='font-size: 1.2em; color: #00D4AA;'>{debt_to_equity:.2f}</span></div>", unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
 # ===================================================================
 # MAIN AREA — The Story Engine

@@ -34,7 +34,7 @@ if "entry_price_key" not in st.session_state:
     st.session_state["entry_price_key"] = 100.0
 if "stop_loss_key" not in st.session_state:
     st.session_state["stop_loss_key"] = 95.0
-if "capital_key" not in st.session_state:
+if "capital_key" not in st.session_state or st.session_state["capital_key"] == 0.0:
     st.session_state["capital_key"] = 300000.0
 if "sync_ticker" not in st.session_state:
     st.session_state["sync_ticker"] = None
@@ -42,7 +42,7 @@ if "last_search_query" not in st.session_state:
     st.session_state["last_search_query"] = ""
 if "search_results" not in st.session_state:
     st.session_state["search_results"] = []
-if "capital_ext" not in st.session_state:
+if "capital_ext" not in st.session_state or st.session_state["capital_ext"] == 0.0:
     st.session_state["capital_ext"] = 300000.0
 
 # ---------------------------------------------------------------------------
@@ -741,6 +741,25 @@ c6.metric("52W Low", f"₹{week52_low:,.2f}")
 c7.metric("Entry Price (Sync)", f"₹{latest['Close']:,.2f}")
 c8.metric("Stop Loss (Sync)", f"₹{support_val:,.2f}")
 
+# --- Health & Volume Metrics ---
+vol_today_raw = latest.get("Volume", 1)
+vol_20sma_raw = latest.get("Vol_20SMA", 1)
+if pd.isna(vol_20sma_raw) or vol_20sma_raw == 0: vol_20sma_raw = 1
+v_ratio_raw = vol_today_raw / vol_20sma_raw
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("##### 🏥 Fundamental & Volume Health")
+h1, h2, h3, h4, h5 = st.columns(5)
+h1.metric("ROCE (Efficiency)", f"{roce:.2f}%")
+h2.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
+h3.metric("Current Volume", f"{int(vol_today_raw):,}")
+h4.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
+
+surge_label = "🔥 Institutional Buy" if v_ratio_raw >= 1.5 else "Normal"
+surge_color = "normal" if v_ratio_raw >= 1.5 else "off"
+h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
+st.markdown("<br>", unsafe_allow_html=True)
+
 # --- Master Algorithmic Rating ---
 score = 0
 current_price_for_rating = latest["Close"]
@@ -821,10 +840,7 @@ with c_gauge:
     st.plotly_chart(gauge_fig, use_container_width=True)
     st.markdown("<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: #00FF00;'>0-30: Safe Entry</span> | <span style='color: #FFFF00;'>31-60: Fair</span> | <span style='color: #FF0000;'>61-100: Overextended</span></p>", unsafe_allow_html=True)
     
-    vol_today_raw = latest.get("Volume", 1)
-    vol_20sma_raw = latest.get("Vol_20SMA", 1)
-    st.markdown(f"<p style='text-align: center; font-size: 1.0em; color: {text_clr};'>Current Vol: <strong>{int(vol_today_raw):,}</strong> | 20-Day Avg: <strong>{int(vol_20sma_raw):,}</strong></p>", unsafe_allow_html=True)
-
+    
 with c_mom:
     vol_today = latest.get("Volume", 1)
     vol_20sma = latest.get("Vol_20SMA", 1)
@@ -865,12 +881,6 @@ with c_mom:
 
     st.markdown(f"<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: {weak_clr};'>0-25: Weak</span> | <span style='color: {strong_clr};'>25-50: Strong</span> | <span style='color: {vstrong_clr};'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
     
-    vol_text = f"<span class='icon-3d'>📈</span> <b>Volume:</b> {vol_ratio:.2f}x Avg"
-    if vol_ratio > 2.0:
-        surge_clr = "#00FF00"
-        vol_text += f" <span style='color: {surge_clr};'>(Institutional Surge)</span>"
-    st.markdown(f"<p style='text-align: center; font-size: 1.1em; margin-top: 10px;'>{vol_text}</p>", unsafe_allow_html=True)
-
 # --- Earnings Warning ---
 earnings_date = check_earnings(full_ticker)
 if earnings_date:
@@ -886,14 +896,6 @@ if earnings_date:
 # --- Chart ---
 fig = build_chart(df, display_label)
 st.plotly_chart(fig, use_container_width=True)
-
-# --- Health Card ---
-hc1, hc2 = st.columns(2)
-with hc1:
-    st.markdown(f"<div style='text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;'><b>ROCE (Proxy)</b><br><span style='font-size: 1.2em; color: #00D4AA;'>{roce:.2f}%</span></div>", unsafe_allow_html=True)
-with hc2:
-    st.markdown(f"<div style='text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;'><b>Debt to Equity</b><br><span style='font-size: 1.2em; color: #00D4AA;'>{debt_to_equity:.2f}</span></div>", unsafe_allow_html=True)
-st.markdown("<br>", unsafe_allow_html=True)
 
 # ===================================================================
 # MAIN AREA — The Story Engine

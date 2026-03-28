@@ -4,6 +4,7 @@ A free, full-featured stock analysis tool for Indian markets (NSE/BSE).
 Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
 """
 
+import io
 import math
 from datetime import datetime, timedelta
 from typing import Optional
@@ -417,11 +418,41 @@ def render_control_center():
 
     with col_batch:
         st.subheader("📂 Batch Processor")
-        st.markdown("_Upload a Screener.in CSV to rank setups._")
-        watchlist_file = st.file_uploader("Upload CSV", type=["csv"])
-        if watchlist_file is not None:
+        tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
+        
+        w_df = None
+        run_scan = False
+        
+        with tab1:
+            st.markdown("_Highlight web tables, press Ctrl+C, and paste below._")
+            pasted_data = st.text_area("Paste Web Table Here:", height=100, placeholder="Paste data here...")
+            if st.button("Run Paste Scan", type="primary"):
+                if pasted_data:
+                    try:
+                        w_df = pd.read_csv(io.StringIO(pasted_data), sep='\t')
+                        run_scan = True
+                    except Exception as e:
+                        st.error(f"Format error: {e}")
+                else:
+                    st.warning("Please paste data first.")
+                    
+        with tab2:
+            watchlist_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
+            if st.button("Run File Scan"):
+                if watchlist_file is not None:
+                    try:
+                        if watchlist_file.name.endswith('.csv'):
+                            w_df = pd.read_csv(watchlist_file)
+                        elif watchlist_file.name.endswith('.xlsx'):
+                            w_df = pd.read_excel(watchlist_file)
+                        run_scan = True
+                    except Exception as e:
+                        st.error(f"File reading error: {e}. (Make sure 'openpyxl' is installed for Excel files).")
+                else:
+                    st.warning("Please upload a file first.")
+
+        if run_scan and w_df is not None:
             try:
-                w_df = pd.read_csv(watchlist_file)
                 w_df.columns = [str(c).strip() for c in w_df.columns]
                 lower_cols = [c.lower() for c in w_df.columns]
                 ticker_col = None
@@ -431,63 +462,62 @@ def render_control_center():
                         break
 
                 if ticker_col is not None:
-                    if st.button("Run Batch Scan"):
-                        with st.spinner("Scanning Watchlist (Top 50)..."):
-                            results = []
-                            tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
-                            for t in tickers:
-                                if ticker_col.lower() == "name":
-                                    try:
-                                        s_res = yf.Search(t, max_results=1).quotes
-                                        if s_res:
-                                            sym = s_res[0].get('symbol', '')
-                                            t_sym = sym if ".NS" in sym or ".BO" in sym else sym + ".NS"
-                                        else:
-                                            t_sym = t.strip().upper() + ".NS"
-                                    except Exception:
+                    with st.spinner("Scanning Watchlist (Top 50)..."):
+                        results = []
+                        tickers = w_df[ticker_col].dropna().astype(str).unique()[:50]
+                        for t in tickers:
+                            if ticker_col.lower() == "name":
+                                try:
+                                    s_res = yf.Search(t, max_results=1).quotes
+                                    if s_res:
+                                        sym = s_res[0].get('symbol', '')
+                                        t_sym = sym if ".NS" in sym or ".BO" in sym else sym + ".NS"
+                                    else:
                                         t_sym = t.strip().upper() + ".NS"
-                                else:
-                                    t_sym = t.strip().upper()
-                                    if not t_sym.endswith(".NS") and not t_sym.endswith(".BO"):
-                                        t_sym += ".NS"
+                                except Exception:
+                                    t_sym = t.strip().upper() + ".NS"
+                            else:
+                                t_sym = t.strip().upper()
+                                if not t_sym.endswith(".NS") and not t_sym.endswith(".BO"):
+                                    t_sym += ".NS"
 
-                                batch_ticker = t_sym
-                                b_df = fetch_ohlcv(batch_ticker)
-                                if not b_df.empty and len(b_df) > 50:
-                                    b_df = compute_indicators(b_df)
-                                    try:
-                                        b_close = b_df["Close"].iloc[-1]
-                                        b_sup1 = b_df["Support_1"].iloc[-1]
-                                        b_res1 = b_df["Resistance_1"].iloc[-1]
+                            batch_ticker = t_sym
+                            b_df = fetch_ohlcv(batch_ticker)
+                            if not b_df.empty and len(b_df) > 50:
+                                b_df = compute_indicators(b_df)
+                                try:
+                                    b_close = b_df["Close"].iloc[-1]
+                                    b_sup1 = b_df["Support_1"].iloc[-1]
+                                    b_res1 = b_df["Resistance_1"].iloc[-1]
 
-                                        risk_pct = ((b_close - b_sup1) / b_close) * 100
-                                        if b_res1 > b_sup1:
-                                            raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
-                                            b_score = max(0, min(100, int(raw_s)))
-                                        else:
-                                            b_score = 50
+                                    risk_pct = ((b_close - b_sup1) / b_close) * 100
+                                    if b_res1 > b_sup1:
+                                        raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                        b_score = max(0, min(100, int(raw_s)))
+                                    else:
+                                        b_score = 50
 
-                                        is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
+                                    is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
 
-                                        results.append({
-                                            "Select": False,
-                                            "Ticker": t_sym,
-                                            "Price": round(b_close, 2),
-                                            "Support1": round(b_sup1, 2),
-                                            "Risk to Stop %": round(risk_pct, 2),
-                                            "Safety Score": b_score,
-                                            "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO"
-                                        })
-                                    except (IndexError, KeyError):
-                                        pass
-                            if results:
-                                res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
-                                st.session_state["batch_results"] = res_df
-                                st.success("Scan Complete! View results below.")
+                                    results.append({
+                                        "Select": False,
+                                        "Ticker": t_sym,
+                                        "Price": round(b_close, 2),
+                                        "Support1": round(b_sup1, 2),
+                                        "Risk to Stop %": round(risk_pct, 2),
+                                        "Safety Score": b_score,
+                                        "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO"
+                                    })
+                                except (IndexError, KeyError):
+                                    pass
+                        if results:
+                            res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
+                            st.session_state["batch_results"] = res_df
+                            st.success("Scan Complete! View results below.")
                 else:
-                    st.error("Could not find 'Name', 'Ticker', or 'Symbol' column in CSV.")
+                    st.error("Could not find 'Name', 'Ticker', or 'Symbol' column in input data.")
             except Exception as e:
-                st.error(f"Error processing CSV: {e}")
+                st.error(f"Error processing data: {e}")
 
         # Gemini API Key
         st.divider()

@@ -629,7 +629,245 @@ with col_sym:
         key="search_input",
     )
 
-# --- 1. Batch Processor (Persistent Placement) ---
+
+if search_query:
+    search_term = search_query.strip()
+    if search_term != st.session_state["last_search_query"]:
+        st.session_state["last_search_query"] = search_term
+        st.session_state["search_results"] = []
+        try:
+            if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
+                 st.session_state["search_results"] = [search_term.upper()]
+            else:
+                s_res = yf.Search(search_term, max_results=8).quotes
+                options = []
+                for q in s_res:
+                    sym = q.get('symbol', '')
+                    exch = str(q.get('exchange', '')).upper()
+                    if not sym: continue
+                    if sym.endswith(".NS") or sym.endswith(".BO"):
+                        options.append(sym)
+                    elif exch in ["NSI", "NSE"]:
+                        options.append(sym + ".NS")
+                    elif exch in ["BSE", "BOM"]:
+                        options.append(sym + ".BO")
+                    else: 
+                        options.append(sym + ".NS")
+                if not options:
+                    options = [search_term.upper() + ".NS"]
+                options.sort(key=lambda x: 0 if x.endswith(".NS") else 1)
+                options = list(dict.fromkeys(options))
+                st.session_state["search_results"] = options
+        except Exception:
+            st.session_state["search_results"] = [search_term.upper() + ".NS"]
+
+    options = st.session_state["search_results"]
+    with col_tick:
+        if len(options) > 0:
+            full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
+        else:
+            full_ticker = search_term.upper() + ".NS"
+
+    display_label = full_ticker
+
+    # --- FETCH DATA & SILENT SYNC ---
+    with st.spinner("Fetching market data..."):
+        df = fetch_ohlcv(full_ticker)
+
+    if df.empty or len(df) < 50:
+        st.info(f"Not enough market data found for **{full_ticker}**. Please verify the symbol.")
+    else:
+        df = compute_indicators(df)
+        company_name = get_company_name(full_ticker)
+
+        try:
+            with st.spinner("Fetching fundamentals..."):
+                tk = yf.Ticker(full_ticker)
+                info = tk.info
+                roce = info.get("returnOnCapitalEmployed") or info.get("returnOnEquity") or info.get("returnOnAssets", 0)
+                if not roce or roce == 0:
+                    try:
+                        inc = tk.income_stmt
+                        bs = tk.balance_sheet
+                        if not inc.empty and not bs.empty:
+                            ebit = inc.loc['EBIT'].iloc[0] if 'EBIT' in inc.index else inc.loc['Operating Income'].iloc[0]
+                            ta = bs.loc['Total Assets'].iloc[0]
+                            cl = bs.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bs.index else 0
+                            ce = ta - cl
+                            roce = (ebit / ce) if ce > 0 else 0
+                    except: pass
+                if roce is not None:
+                    roce = float(roce)
+                    if -2.0 < roce < 2.0 and roce != 0.0: roce *= 100
+                else: roce = 0.0
+
+                debt_to_equity = info.get("debtToEquity", 0)
+                if not debt_to_equity or debt_to_equity == 0:
+                    try:
+                        bs = tk.balance_sheet
+                        if not bs.empty:
+                            td = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
+                            te = bs.loc['Stockholders Equity'].iloc[0] if 'Stockholders Equity' in bs.index else 1
+                            debt_to_equity = td / te
+                    except: pass
+                if debt_to_equity is not None:
+                    debt_to_equity = float(debt_to_equity)
+                    if debt_to_equity > 5.0: debt_to_equity /= 100
+                else: debt_to_equity = 0.0
+        except Exception:
+            roce = 0.0
+            debt_to_equity = 0.0
+
+        analyst_rec = get_analyst_rating(full_ticker)
+        if analyst_rec:
+            analyst_str = str(analyst_rec).replace("_", " ").title()
+            st.markdown(f"<h3>{company_name} <span class='analyst-badge'>Analyst Consensus: {analyst_str}</span></h3>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
+
+        try:
+            latest = df.iloc[-1]
+            prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
+            day_change = latest["Close"] - prev_close
+            day_change_pct = (day_change / prev_close) * 100
+            support_val = df["Support_1"].iloc[-1]
+            resistance_val = df["Resistance_1"].iloc[-1]
+            week52_high = df["High"].max()
+            week52_low = df["Low"].min()
+
+            st.divider()
+            
+            # --- 1% Risk Calculator (Decoupled & Synced) ---
+            st.subheader("📐 1% Risk Calculator")
+            st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
+            
+            if st.session_state["sync_ticker"] != full_ticker:
+                st.session_state["sync_ticker"] = full_ticker
+                st.session_state["entry_price_key"] = float(latest["Close"])
+                st.session_state["stop_loss_key"] = float(support_val)
+
+            col_input, col_pos = st.columns(2)
+            with col_input:
+                capital = st.number_input("Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key")
+                st.session_state["capital_ext"] = capital
+                entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
+                stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
+
+            with col_pos:
+                if entry_price > stop_loss:
+                    max_risk = capital * 0.01
+                    risk_per_share = entry_price - stop_loss
+                    shares_to_buy = math.floor(max_risk / risk_per_share)
+                    total_deployed = shares_to_buy * entry_price
+                    if shares_to_buy > 0:
+                        st.subheader("📊 Position Size")
+                        st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
+                        st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
+                        st.metric("Shares to Buy", f"{shares_to_buy:,}")
+                        st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                        if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
+                else: st.error("Entry Price must be greater than Stop-Loss Price.")
+
+            st.divider()
+
+            # --- Metrics Row ---
+            c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+            c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
+            c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
+            c3.metric("Support (S1)", f"₹{support_val:,.2f}")
+            c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
+            c5.metric("52W High", f"₹{week52_high:,.2f}")
+            c6.metric("52W Low", f"₹{week52_low:,.2f}")
+            c7.metric("Entry Price (Sync)", f"₹{latest['Close']:,.2f}")
+            c8.metric("Stop Loss (Sync)", f"₹{support_val:,.2f}")
+
+            # --- Fundamental health ---
+            vol_today_raw = latest.get("Volume", 1)
+            vol_20sma_raw = latest.get("Vol_20SMA", 1)
+            if pd.isna(vol_20sma_raw) or vol_20sma_raw == 0: vol_20sma_raw = 1
+            v_ratio_raw = vol_today_raw / vol_20sma_raw
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("##### 🏥 Fundamental & Volume Health")
+            h1, h2, h3, h4, h5 = st.columns(5)
+            h1.metric("ROCE (Efficiency)", f"{roce:.2f}%")
+            h2.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
+            h3.metric("Current Volume", f"{int(vol_today_raw):,}")
+            h4.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
+            surge_label = "🔥 Institutional Buy" if v_ratio_raw >= 1.5 else "Normal"
+            h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color="normal" if v_ratio_raw >= 1.5 else "off")
+
+            # --- Master Rating ---
+            score = 0
+            if resistance_val > support_val:
+                raw_s = ((latest["Close"] - support_val) / (resistance_val - support_val)) * 100
+                s_score = max(0, min(100, int(raw_s)))
+            else: s_score = 50
+            if s_score <= 30: score += 2
+            elif s_score <= 60: score += 1
+            adx_v = latest.get("ADX", 0)
+            if adx_v >= 50: score += 2
+            elif adx_v >= 25: score += 1
+            if v_ratio_raw >= 1.5: score += 2
+            elif v_ratio_raw >= 1.0: score += 1
+            if roce > 15: score += 1
+            if debt_to_equity < 0.5: score += 1
+
+            if score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
+            elif score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
+            elif score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
+            else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
+
+            rating_html = f'<div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;"><div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div></div>'
+            st.markdown(rating_html, unsafe_allow_html=True)
+
+            # --- Visual Indicators (Gauge) ---
+            c_gauge, c_mom = st.columns(2)
+            with c_gauge:
+                g_fig = go.Figure(go.Indicator(mode="gauge+number", value=s_score, title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 30], 'color': 'rgba(0, 212, 170, 0.3)'}, {'range': [30, 60], 'color': 'rgba(255, 215, 0, 0.3)'}, {'range': [60, 100], 'color': 'rgba(255, 75, 75, 0.3)'}]}))
+                g_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+                st.plotly_chart(g_fig, use_container_width=True)
+            with c_mom:
+                adx_fig = go.Figure(go.Indicator(mode="gauge+number", value=adx_v, title={'text': "Trend Strength (ADX)", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 25], 'color': 'gray'}, {'range': [25, 50], 'color': 'green'}, {'range': [50, 100], 'color': 'darkgreen'}]}))
+                adx_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+                st.plotly_chart(adx_fig, use_container_width=True)
+
+            # --- Chart & Earnings ---
+            earnings_date = check_earnings(full_ticker)
+            if earnings_date: st.warning(f"🚨 EARNINGS ALERT: {company_name} reports on {earnings_date.strftime('%d %b %Y')}!")
+            fig = build_chart(df, display_label)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- News Section ---
+            st.subheader("📰 Recent Catalysts")
+            with st.spinner("Fetching news..."):
+                articles = fetch_news(company_name)
+            if articles:
+                for i, art in enumerate(articles, 1):
+                    st.markdown(f"**{i}.** [{art.get('title')}]({art.get('url')})  \n<sub>{art.get('publisher', {}).get('title')} · {art.get('published date')}</sub>", unsafe_allow_html=True)
+                # AI Summary
+                headlines = [art.get("title") for art in articles if art.get("title")]
+                saved_key = st.session_state.get("gemini_key")
+                if saved_key and headlines:
+                    st.markdown("---")
+                    summary_key = f"ai_summary_{full_ticker}"
+                    if summary_key not in st.session_state or st.session_state[summary_key] is None:
+                        if st.button("Generate AI Catalyst Summary"):
+                            with st.spinner("Generating..."):
+                                summary = summarize_with_gemini(headlines, company_name, saved_key)
+                                st.session_state[summary_key] = summary
+                                st.rerun()
+                    else:
+                        st.markdown(f'<div class="story-section">{st.session_state[summary_key]}</div>', unsafe_allow_html=True)
+            else: st.info("No recent news found.")
+
+        except (IndexError, KeyError) as e:
+            st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
+
+# ===================================================================
+# BATCH ENGINE — Persistent Bottom Layer
+# ===================================================================
+st.markdown("---")
 render_control_center()
 
 if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
@@ -663,401 +901,6 @@ if "batch_results" in st.session_state and st.session_state["batch_results"] is 
             file_name="Batch_Trade_Plan.csv",
             mime="text/csv",
         )
-
-# --- 2. The Stop Gate ---
-if not search_query:
-    st.info("Enter a stock symbol above or use the Batch Processor to get started.")
-    st.stop()
-
-search_term = search_query.strip()
-if search_term != st.session_state["last_search_query"]:
-    st.session_state["last_search_query"] = search_term
-    st.session_state["search_results"] = []
-    try:
-        if search_term.upper().endswith(".NS") or search_term.upper().endswith(".BO"):
-             st.session_state["search_results"] = [search_term.upper()]
-        else:
-            s_res = yf.Search(search_term, max_results=8).quotes
-            options = []
-            for q in s_res:
-                sym = q.get('symbol', '')
-                exch = str(q.get('exchange', '')).upper()
-                if not sym: continue
-                if sym.endswith(".NS") or sym.endswith(".BO"):
-                    options.append(sym)
-                elif exch in ["NSI", "NSE"]:
-                    options.append(sym + ".NS")
-                elif exch in ["BSE", "BOM"]:
-                    options.append(sym + ".BO")
-                else: 
-                    options.append(sym + ".NS")
-            if not options:
-                options = [search_term.upper() + ".NS"]
-                
-            # Prioritize NSE (.NS) tickers
-            options.sort(key=lambda x: 0 if x.endswith(".NS") else 1)
-            
-            # Remove any duplicates while preserving order
-            options = list(dict.fromkeys(options))
-            
-            st.session_state["search_results"] = options
-    except Exception:
-        st.session_state["search_results"] = [search_term.upper() + ".NS"]
-
-options = st.session_state["search_results"]
-
-with col_tick:
-    if len(options) > 0:
-        full_ticker = st.selectbox("Select Matching Ticker", options=options, key="ticker_select")
-    else:
-        full_ticker = search_term.upper() + ".NS"
-
-display_label = full_ticker
-
-# ===================================================================
-# FETCH DATA & SILENT SYNC
-# ===================================================================
-with st.spinner("Fetching market data..."):
-    df = fetch_ohlcv(full_ticker)
-
-if df.empty or len(df) < 50:
-    st.info(f"Not enough market data found for **{full_ticker}**. Please verify the symbol.")
-    st.stop()
-
-df = compute_indicators(df)
-company_name = get_company_name(full_ticker)
-
-try:
-    with st.spinner("Fetching fundamentals..."):
-        tk = yf.Ticker(full_ticker)
-        info = tk.info
-        
-        # --- ROCE Logic ---
-        roce = info.get("returnOnCapitalEmployed") or info.get("returnOnEquity") or info.get("returnOnAssets", 0)
-        
-        if not roce or roce == 0:
-            try:
-                inc = tk.income_stmt
-                bs = tk.balance_sheet
-                if not inc.empty and not bs.empty:
-                    ebit = inc.loc['EBIT'].iloc[0] if 'EBIT' in inc.index else inc.loc['Operating Income'].iloc[0]
-                    ta = bs.loc['Total Assets'].iloc[0]
-                    cl = bs.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bs.index else 0
-                    ce = ta - cl
-                    roce = (ebit / ce) if ce > 0 else 0
-            except:
-                pass
-
-        if roce is not None:
-            roce = float(roce)
-            if -2.0 < roce < 2.0 and roce != 0.0: roce *= 100
-        else:
-            roce = 0.0
-
-        # --- Debt to Equity Logic ---
-        debt_to_equity = info.get("debtToEquity", 0)
-        
-        if not debt_to_equity or debt_to_equity == 0:
-            try:
-                bs = tk.balance_sheet
-                if not bs.empty:
-                    td = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
-                    te = bs.loc['Stockholders Equity'].iloc[0] if 'Stockholders Equity' in bs.index else 1
-                    debt_to_equity = td / te
-            except:
-                pass
-                
-        if debt_to_equity is not None:
-            debt_to_equity = float(debt_to_equity)
-            if debt_to_equity > 5.0: debt_to_equity /= 100
-        else:
-            debt_to_equity = 0.0
-except Exception:
-    roce = 0.0
-    debt_to_equity = 0.0
-
-analyst_rec = get_analyst_rating(full_ticker)
-
-if analyst_rec:
-    analyst_str = str(analyst_rec).replace("_", " ").title()
-    st.markdown(f"<h3>{company_name} <span class='analyst-badge'>Analyst Consensus: {analyst_str}</span></h3>", unsafe_allow_html=True)
-else:
-    st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
-
-try:
-    latest = df.iloc[-1]
-    prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
-    day_change = latest["Close"] - prev_close
-    day_change_pct = (day_change / prev_close) * 100
-    support_val = df["Support_1"].iloc[-1]
-    resistance_val = df["Resistance_1"].iloc[-1]
-    week52_high = df["High"].max()
-    week52_low = df["Low"].min()
-except (IndexError, KeyError) as e:
-    st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
-    st.stop()
-
-st.divider()
-
-# --- 1% Risk Calculator (Decoupled & Synced) ---
-st.subheader("📐 1% Risk Calculator")
-st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
-
-# Auto-Sync Trigger
-if st.session_state["sync_ticker"] != full_ticker:
-    st.session_state["sync_ticker"] = full_ticker
-    st.session_state["entry_price_key"] = float(latest["Close"])
-    st.session_state["stop_loss_key"] = float(support_val)
-
-col_input, col_pos = st.columns(2)
-with col_input:
-    capital = st.number_input(
-        "Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key"
-    )
-    # Update capital_ext for batch use
-    st.session_state["capital_ext"] = capital
-
-    entry_price = st.number_input(
-        "Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key"
-    )
-    stop_loss = st.number_input(
-        "Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key"
-    )
-
-with col_pos:
-    if entry_price > stop_loss:
-        max_risk = capital * 0.01
-        risk_per_share = entry_price - stop_loss
-        shares_to_buy = math.floor(max_risk / risk_per_share)
-        total_deployed = shares_to_buy * entry_price
-
-        if shares_to_buy > 0:
-            st.subheader("📊 Position Size")
-            st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
-            st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
-            st.metric("Shares to Buy", f"{shares_to_buy:,}")
-            st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
-            if total_deployed > capital:
-                st.warning("⚠️ Position exceeds your total capital!")
-    else:
-        st.error("Entry Price must be greater than Stop-Loss Price.")
-
-st.divider()
-
-# --- Metrics Row ---
-c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
-c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
-c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
-c3.metric("Support (S1)", f"₹{support_val:,.2f}")
-c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
-c5.metric("52W High", f"₹{week52_high:,.2f}")
-c6.metric("52W Low", f"₹{week52_low:,.2f}")
-c7.metric("Entry Price (Sync)", f"₹{latest['Close']:,.2f}")
-c8.metric("Stop Loss (Sync)", f"₹{support_val:,.2f}")
-
-# --- Health & Volume Metrics ---
-vol_today_raw = latest.get("Volume", 1)
-vol_20sma_raw = latest.get("Vol_20SMA", 1)
-if pd.isna(vol_20sma_raw) or vol_20sma_raw == 0: vol_20sma_raw = 1
-v_ratio_raw = vol_today_raw / vol_20sma_raw
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("##### 🏥 Fundamental & Volume Health")
-h1, h2, h3, h4, h5 = st.columns(5)
-h1.metric("ROCE (Efficiency)", f"{roce:.2f}%")
-h2.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
-h3.metric("Current Volume", f"{int(vol_today_raw):,}")
-h4.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
-
-surge_label = "🔥 Institutional Buy" if v_ratio_raw >= 1.5 else "Normal"
-surge_color = "normal" if v_ratio_raw >= 1.5 else "off"
-h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- Master Algorithmic Rating ---
-score = 0
-current_price_for_rating = latest["Close"]
-if resistance_val > support_val:
-    raw_s = ((current_price_for_rating - support_val) / (resistance_val - support_val)) * 100
-    s_score = max(0, min(100, int(raw_s)))
-else:
-    s_score = 50
-
-if s_score <= 30: score += 2
-elif s_score <= 60: score += 1
-
-adx_val_for_rating = latest.get("ADX", 0)
-if pd.isna(adx_val_for_rating): adx_val_for_rating = 0
-
-if adx_val_for_rating >= 50: score += 2
-elif adx_val_for_rating >= 25: score += 1
-
-vol_td = latest.get("Volume", 1)
-vol_20s = latest.get("Vol_20SMA", 1)
-if pd.isna(vol_20s) or vol_20s == 0: vol_20s = 1
-v_ratio = vol_td / vol_20s
-
-if v_ratio >= 1.5: score += 2
-elif v_ratio >= 1.0: score += 1
-
-if roce > 15: score += 1
-if debt_to_equity < 0.5: score += 1
-
-if score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
-elif score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
-elif score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
-else: master_rating, rating_color_hex = "AVOID (Weak Fundamentals/Trend)", "#FF4B4B"
-
-rating_html = f'''
-<div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
-    <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex}; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">MASTER ALGORITHMIC RATING: {master_rating}</div>
-</div>
-'''
-st.markdown(rating_html, unsafe_allow_html=True)
-
-# --- Visual Scoring (Gauge & Momentum) ---
-c_gauge, c_mom = st.columns([1, 1])
-
-text_clr = "white"
-
-with c_gauge:
-    current_price = latest["Close"]
-    
-    if resistance_val > support_val:
-        # Lower score means closer to support (safer entry)
-        raw_score = ((current_price - support_val) / (resistance_val - support_val)) * 100
-        safe_score = max(0, min(100, int(raw_score)))
-    else:
-        safe_score = 50
-
-    gauge_num_color = "#00FF00" if safe_score <= 30 else "#FFD700" if safe_score <= 60 else "#FF4B4B"
-
-    gauge_fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=safe_score,
-        number={'font': {'color': gauge_num_color}},
-        domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': text_clr}},
-        gauge={
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': text_clr},
-            'bar': {'color': "#00D4AA"},
-            'bgcolor': "rgba(0,0,0,0)",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-            'steps': [
-                {'range': [0, 30], 'color': 'rgba(0, 212, 170, 0.3)'},
-                {'range': [30, 60], 'color': 'rgba(255, 215, 0, 0.3)'},
-                {'range': [60, 100], 'color': 'rgba(255, 75, 75, 0.3)'}],
-        }
-    ))
-    gauge_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
-    st.plotly_chart(gauge_fig, use_container_width=True)
-    st.markdown("<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: #00FF00;'>0-30: Safe Entry</span> | <span style='color: #FFFF00;'>31-60: Fair</span> | <span style='color: #FF0000;'>61-100: Overextended</span></p>", unsafe_allow_html=True)
-    
-    
-with c_mom:
-    vol_today = latest.get("Volume", 1)
-    vol_20sma = latest.get("Vol_20SMA", 1)
-    if pd.isna(vol_20sma) or vol_20sma == 0:
-        vol_20sma = 1
-    vol_ratio = vol_today / vol_20sma
-    
-    adx_val = latest.get("ADX", 0)
-    if pd.isna(adx_val):
-        adx_val = 0
-        
-    adx_num_color = "#FF4B4B" if adx_val <= 25 else "#00D4AA" if adx_val <= 50 else "#00FF00"
-        
-    adx_fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=adx_val,
-        number={'font': {'color': adx_num_color}},
-        domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Trend Strength (ADX)", 'font': {'size': 20, 'color': text_clr}},
-        gauge={
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': text_clr},
-            'bar': {'color': "#00D4AA"},
-            'bgcolor': "rgba(0,0,0,0)",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-            'steps': [
-                {'range': [0, 25], 'color': 'gray'},
-                {'range': [25, 50], 'color': 'green'},
-                {'range': [50, 100], 'color': 'darkgreen'}],
-        }
-    ))
-    adx_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
-    st.plotly_chart(adx_fig, use_container_width=True)
-    
-    weak_clr = "gray"
-    strong_clr = "green"
-    vstrong_clr = "darkgreen"
-
-    st.markdown(f"<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: {weak_clr};'>0-25: Weak</span> | <span style='color: {strong_clr};'>25-50: Strong</span> | <span style='color: {vstrong_clr};'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
-    
-# --- Earnings Warning ---
-earnings_date = check_earnings(full_ticker)
-if earnings_date:
-    formatted_date = earnings_date.strftime("%d %b %Y")
-    st.markdown(
-        f'<div class="earnings-warning">'
-        f"<span class='icon-3d'>🚨</span> EARNINGS ALERT: {company_name} reports earnings on {formatted_date}! "
-        f"Trade with extreme caution — expect high volatility."
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-# --- Chart ---
-fig = build_chart(df, display_label)
-st.plotly_chart(fig, use_container_width=True)
-
-# ===================================================================
-# MAIN AREA — The Story Engine
-# ===================================================================
-st.subheader("📰 Recent Catalysts")
-
-with st.spinner("Fetching latest news..."):
-    articles = fetch_news(company_name)
-
-if articles:
-    for i, art in enumerate(articles, 1):
-        title = art.get("title", "No title")
-        publisher = art.get("publisher", {})
-        pub_name = publisher.get("title", "") if isinstance(publisher, dict) else str(publisher)
-        pub_date = art.get("published date", "")
-        url = art.get("url", "")
-
-        link = f"[{title}]({url})" if url else title
-        st.markdown(f"**{i}.** {link}  \n<sub>{pub_name} · {pub_date}</sub>", unsafe_allow_html=True)
-
-    # AI Summary
-    headlines = [art.get("title", "") for art in articles if art.get("title")]
-    saved_key = st.session_state.get("gemini_key")
-    if saved_key and headlines:
-        st.markdown("---")
-        st.markdown("**🤖 AI-Powered Catalyst Summary**")
-        
-        summary_key = f"ai_summary_{full_ticker}"
-        
-        if summary_key not in st.session_state:
-            st.session_state[summary_key] = None
-            
-        if st.session_state[summary_key] is None:
-            if st.button("Generate AI Catalyst Summary"):
-                with st.spinner("Generating AI catalyst summary..."):
-                    summary = summarize_with_gemini(headlines, company_name, saved_key)
-                    st.session_state[summary_key] = summary
-                    st.rerun()
-        else:
-            st.markdown(
-                f'<div class="story-section">{st.session_state[summary_key]}</div>',
-                unsafe_allow_html=True,
-            )
-    elif not saved_key:
-        st.info("Add your free Gemini API key in the sidebar to enable AI-powered catalyst summaries.")
-else:
-    st.info("No recent news found.")
-
 
 # ===================================================================
 # Footer

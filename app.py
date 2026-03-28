@@ -43,8 +43,6 @@ if "search_results" not in st.session_state:
     st.session_state["search_results"] = []
 if "capital_ext" not in st.session_state:
     st.session_state["capital_ext"] = 100000.0
-if "theme_light" not in st.session_state:
-    st.session_state["theme_light"] = False
 
 # ---------------------------------------------------------------------------
 # Custom CSS
@@ -294,13 +292,12 @@ def build_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     )
 
     # Layout
-    is_light = st.session_state.get("theme_light", False)
-    bg_color = "#FFFFFF" if is_light else "#0E1117"
-    text_color = "#000000" if is_light else "white"
+    bg_color = "#0E1117"
+    text_color = "white"
 
     fig.update_layout(
         title=dict(text=f"{symbol} — Daily Chart (1 Year)", font=dict(size=20, color=text_color)),
-        template="plotly_white" if is_light else "plotly_dark",
+        template="plotly_dark",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font=dict(color=text_color),
@@ -517,20 +514,7 @@ def render_control_center():
 # ===================================================================
 # TOP SECTION — Search & Ticker Selection
 # ===================================================================
-col_title, col_theme = st.columns([8, 2])
-with col_title:
-    st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
-with col_theme:
-    if "theme_light" not in st.session_state:
-        st.session_state["theme_light"] = False
-    light_mode = st.toggle("☀️ Light Mode", value=st.session_state["theme_light"], key="theme_toggle")
-    if light_mode != st.session_state["theme_light"]:
-        st.session_state["theme_light"] = light_mode
-        import os
-        os.makedirs(".streamlit", exist_ok=True)
-        with open(".streamlit/config.toml", "w") as f:
-            f.write(f'[theme]\nbase="{"light" if light_mode else "dark"}"\n')
-        st.rerun()
+st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
@@ -719,8 +703,7 @@ st.markdown(rating_html, unsafe_allow_html=True)
 # --- Visual Scoring (Gauge & Momentum) ---
 c_gauge, c_mom = st.columns([1, 1])
 
-is_light = st.session_state.get("theme_light", False)
-text_clr = "black" if is_light else "white"
+text_clr = "white"
 
 with c_gauge:
     current_price = latest["Close"]
@@ -794,15 +777,15 @@ with c_mom:
     adx_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': text_clr})
     st.plotly_chart(adx_fig, use_container_width=True)
     
-    weak_clr = "#AAAAAA" if is_light else "gray"
-    strong_clr = "#00B050" if is_light else "green"
-    vstrong_clr = "#006400" if is_light else "darkgreen"
+    weak_clr = "gray"
+    strong_clr = "green"
+    vstrong_clr = "darkgreen"
 
     st.markdown(f"<p style='text-align: center; font-size: 0.9em; margin-top: -10px;'><span style='color: {weak_clr};'>0-25: Weak</span> | <span style='color: {strong_clr};'>25-50: Strong</span> | <span style='color: {vstrong_clr};'>50-100: Very Strong</span></p>", unsafe_allow_html=True)
     
     vol_text = f"<span class='icon-3d'>📈</span> <b>Volume:</b> {vol_ratio:.2f}x Avg"
     if vol_ratio > 2.0:
-        surge_clr = "#00B050" if is_light else "#00FF00"
+        surge_clr = "#00FF00"
         vol_text += f" <span style='color: {surge_clr};'>(Institutional Surge)</span>"
     st.markdown(f"<p style='text-align: center; font-size: 1.1em; margin-top: 10px;'>{vol_text}</p>", unsafe_allow_html=True)
 

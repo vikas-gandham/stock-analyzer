@@ -438,8 +438,28 @@ def render_control_center():
             if st.button("Run Paste Scan", type="primary"):
                 if pasted_data:
                     try:
-                        w_df = pd.read_csv(io.StringIO(pasted_data), sep='\t')
-                        run_scan = True
+                        # Read as raw data without headers to prevent immediate Pandas crash
+                        raw_data = pd.read_csv(io.StringIO(pasted_data), sep='\t', header=None)
+                        if not raw_data.empty:
+                            # 1. Take the first row as headers
+                            header_row = raw_data.iloc[0].astype(str).tolist()
+                            # 2. Generate unique names for every column manually
+                            unique_headers = []
+                            seen = {}
+                            for h in header_row:
+                                h_clean = h.strip() if h.strip() != "" else "Unnamed"
+                                if h_clean in seen:
+                                    seen[h_clean] += 1
+                                    unique_headers.append(f"{h_clean}_{seen[h_clean]}")
+                                else:
+                                    seen[h_clean] = 0
+                                    unique_headers.append(h_clean)
+                            
+                            # 3. Reconstruct DF with data only (row 1 onwards) and clean headers
+                            w_df = raw_data.iloc[1:].copy()
+                            w_df.columns = unique_headers
+                            w_df = w_df.reset_index(drop=True)
+                            run_scan = True
                     except Exception as e:
                         st.error(f"Format error: {e}")
                 else:
@@ -451,33 +471,38 @@ def render_control_center():
                 if watchlist_file is not None:
                     try:
                         if watchlist_file.name.endswith('.csv'):
-                            w_df = pd.read_csv(watchlist_file)
-                        elif watchlist_file.name.endswith('.xlsx'):
-                            w_df = pd.read_excel(watchlist_file)
+                            raw_data = pd.read_csv(watchlist_file, header=None)
+                        else:
+                            raw_data = pd.read_excel(watchlist_file, header=None)
+                        
+                        header_row = raw_data.iloc[0].astype(str).tolist()
+                        unique_headers = []
+                        seen = {}
+                        for h in header_row:
+                            h_clean = h.strip() if h.strip() != "" else "Unnamed"
+                            if h_clean in seen:
+                                seen[h_clean] += 1
+                                unique_headers.append(f"{h_clean}_{seen[h_clean]}")
+                            else:
+                                seen[h_clean] = 0
+                                unique_headers.append(h_clean)
+                        
+                        w_df = raw_data.iloc[1:].copy()
+                        w_df.columns = unique_headers
+                        w_df = w_df.reset_index(drop=True)
                         run_scan = True
                     except Exception as e:
-                        st.error(f"File reading error: {e}. (Make sure 'openpyxl' is installed for Excel files).")
+                        st.error(f"File reading error: {e}")
                 else:
                     st.warning("Please upload a file first.")
 
         if run_scan and w_df is not None:
             try:
-                # Reset index and force unique column names immediately
-                w_df = w_df.reset_index(drop=True)
-                w_df.columns = [f"col_{i}" if pd.isna(c) or str(c).strip() == "" else str(c).strip() for i, c in enumerate(w_df.columns)]
+                # Find ticker column
+                ticker_col = next((c for c in w_df.columns if c.lower() in ["ticker", "symbol", "name"]), None)
                 
-                # Find the ticker column by checking lowercase names
-                ticker_col = None
-                for c in w_df.columns:
-                    if c.lower() in ["ticker", "symbol", "name"]:
-                        ticker_col = c
-                        break
-
-                if ticker_col is not None:
-                    # EXTRACT ONLY THE TICKERS into a clean Python list 
-                    # This bypasses all further Pandas 'reindex' issues
-                    raw_tickers = w_df[ticker_col].dropna().astype(str).unique().tolist()
-                    tickers_to_scan = raw_tickers[:50] 
+                if ticker_col:
+                    tickers_to_scan = w_df[ticker_col].dropna().astype(str).unique().tolist()[:50]
 
                     with st.spinner("Scanning Watchlist (Top 50)..."):
                         results = []

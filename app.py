@@ -407,94 +407,27 @@ def get_analyst_rating(ticker: str) -> Optional[str]:
 
 def render_control_center():
     st.markdown("---")
-    st.markdown("<h2>🛠️ Trading Tools & Batch Scanner</h2>", unsafe_allow_html=True)
-    col_calc, col_batch = st.columns(2)
+    st.markdown("<h2>🛠️ Batch Scanner & AI Control</h2>", unsafe_allow_html=True)
     
-    with col_calc:
-        st.subheader("📐 1% Risk Calculator")
-        st.markdown("_Never risk more than 1% of your capital on a single trade._")
-
-        capital = st.number_input(
-            "Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key"
-        )
-        st.session_state["capital_ext"] = capital
-
-        entry_price = st.number_input(
-            "Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key"
-        )
-        stop_loss = st.number_input(
-            "Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key"
-        )
-
-        if entry_price > stop_loss:
-            max_risk = capital * 0.01
-            risk_per_share = entry_price - stop_loss
-            shares_to_buy = math.floor(max_risk / risk_per_share)
-            total_deployed = shares_to_buy * entry_price
-
-            if shares_to_buy > 0:
-                st.divider()
-                st.subheader("📊 Position Size")
-                st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
-                st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
-                st.metric("Shares to Buy", f"{shares_to_buy:,}")
-                st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
-                if total_deployed > capital:
-                    st.warning("⚠️ Position exceeds your total capital!")
-        else:
-            st.error("Entry Price must be greater than Stop-Loss Price.")
-
-    with col_batch:
-        st.subheader("📂 Batch Processor")
-        tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
-        
-        w_df = None
-        run_scan = False
-        
-        with tab1:
-            st.markdown("_Highlight web tables, press Ctrl+C, and paste below._")
-            pasted_data = st.text_area("Paste Web Table Here:", height=100, placeholder="Paste data here...")
-            if st.button("Run Paste Scan", type="primary"):
-                if pasted_data:
-                    try:
-                        # Read as raw data without headers to prevent immediate Pandas crash
-                        raw_data = pd.read_csv(io.StringIO(pasted_data), sep='\t', header=None)
-                        if not raw_data.empty:
-                            # 1. Take the first row as headers
-                            header_row = raw_data.iloc[0].astype(str).tolist()
-                            # 2. Generate unique names for every column manually
-                            unique_headers = []
-                            seen = {}
-                            for h in header_row:
-                                h_clean = h.strip() if h.strip() != "" else "Unnamed"
-                                if h_clean in seen:
-                                    seen[h_clean] += 1
-                                    unique_headers.append(f"{h_clean}_{seen[h_clean]}")
-                                else:
-                                    seen[h_clean] = 0
-                                    unique_headers.append(h_clean)
-                            
-                            # 3. Reconstruct DF with data only (row 1 onwards) and clean headers
-                            w_df = raw_data.iloc[1:].copy()
-                            w_df.columns = unique_headers
-                            w_df = w_df.reset_index(drop=True)
-                            run_scan = True
-                    except Exception as e:
-                        st.error(f"Format error: {e}")
-                else:
-                    st.warning("Please paste data first.")
-                    
-        with tab2:
-            watchlist_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
-            if st.button("Run File Scan"):
-                if watchlist_file is not None:
-                    try:
-                        if watchlist_file.name.endswith('.csv'):
-                            raw_data = pd.read_csv(watchlist_file, header=None)
-                        else:
-                            raw_data = pd.read_excel(watchlist_file, header=None)
-                        
+    # --- Row 1: Batch Processor (Full-Width) ---
+    st.subheader("📂 Batch Processor")
+    tab1, tab2, tab3 = st.tabs(["📝 Quick Paste", "📁 Upload File", "💎 Elite Watchlist"])
+    
+    w_df = None
+    run_scan = False
+    
+    with tab1:
+        st.markdown("_Highlight web tables, press Ctrl+C, and paste below._")
+        pasted_data = st.text_area("Paste Web Table Here:", height=100, placeholder="Paste data here...")
+        if st.button("Run Paste Scan", type="primary"):
+            if pasted_data:
+                try:
+                    # Read as raw data without headers to prevent immediate Pandas crash
+                    raw_data = pd.read_csv(io.StringIO(pasted_data), sep='\t', header=None)
+                    if not raw_data.empty:
+                        # 1. Take the first row as headers
                         header_row = raw_data.iloc[0].astype(str).tolist()
+                        # 2. Generate unique names for every column manually
                         unique_headers = []
                         seen = {}
                         for h in header_row:
@@ -506,15 +439,56 @@ def render_control_center():
                                 seen[h_clean] = 0
                                 unique_headers.append(h_clean)
                         
+                        # 3. Reconstruct DF with data only (row 1 onwards) and clean headers
                         w_df = raw_data.iloc[1:].copy()
                         w_df.columns = unique_headers
                         w_df = w_df.reset_index(drop=True)
                         run_scan = True
-                    except Exception as e:
-                        st.error(f"File reading error: {e}")
-                else:
-                    st.warning("Please upload a file first.")
+                except Exception as e:
+                    st.error(f"Format error: {e}")
+            else:
+                st.warning("Please paste data first.")
+                
+    with tab2:
+        watchlist_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
+        if st.button("Run File Scan"):
+            if watchlist_file is not None:
+                try:
+                    if watchlist_file.name.endswith('.csv'):
+                        raw_data = pd.read_csv(watchlist_file, header=None)
+                    else:
+                        raw_data = pd.read_excel(watchlist_file, header=None)
+                    
+                    header_row = raw_data.iloc[0].astype(str).tolist()
+                    unique_headers = []
+                    seen = {}
+                    for h in header_row:
+                        h_clean = h.strip() if h.strip() != "" else "Unnamed"
+                        if h_clean in seen:
+                            seen[h_clean] += 1
+                            unique_headers.append(f"{h_clean}_{seen[h_clean]}")
+                        else:
+                            seen[h_clean] = 0
+                            unique_headers.append(h_clean)
+                    
+                    w_df = raw_data.iloc[1:].copy()
+                    w_df.columns = unique_headers
+                    w_df = w_df.reset_index(drop=True)
+                    run_scan = True
+                except Exception as e:
+                    st.error(f"File reading error: {e}")
+            else:
+                st.warning("Please upload a file first.")
 
+    with tab3:
+        st.markdown("_Scan pre-selected high-beta & blue-chip Indian stocks._")
+        elite_tickers = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
+                         "ADANIENT.NS", "TATAMOTORS.NS", "SBIN.NS", "BHARTIARTL.NS", "AXISBANK.NS"]
+        if st.button("Run Elite Scan", type="primary"):
+            # Create a virtual DF for the batch processor to consume
+            w_df = pd.DataFrame({"Ticker": elite_tickers})
+            run_scan = True
+        
         if run_scan and w_df is not None:
             try:
                 # Force Column Strip (Ensure no invisible spaces)
@@ -644,9 +618,6 @@ def render_control_center():
 # ===================================================================
 # INITIALIZE SESSION STATE (Moved to top level file)
 
-# ===================================================================
-# TOP SECTION — Search & Ticker Selection
-# ===================================================================
 st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
 
 col_sym, col_tick = st.columns([7, 3])
@@ -658,10 +629,45 @@ with col_sym:
         key="search_input",
     )
 
+# --- 1. Batch Processor (Persistent Placement) ---
+render_control_center()
+
+if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
+    st.markdown("---")
+    st.subheader("🔥 Watchlist Batch Results")
+    edited_df = st.data_editor(
+        st.session_state["batch_results"],
+        hide_index=True,
+        use_container_width=True
+    )
+    st.session_state["batch_results"] = edited_df
+    
+    selected_rows = edited_df[edited_df["Select"] == True]
+    if not selected_rows.empty:
+        cap = st.session_state.get("capital_ext", 100000.0)
+        export_list = []
+        for _, row in selected_rows.iterrows():
+            ep = row["Price"]
+            sl = row["Support1"]
+            shares = math.floor((cap * 0.01) / (ep - sl)) if ep > sl else 0
+            export_list.append({
+                "Ticker": row["Ticker"],
+                "Entry Price": ep,
+                "Stop Loss": sl,
+                "Shares to Buy": shares
+            })
+            
+        st.download_button(
+            label="⬇️ Download Trade Plan",
+            data=pd.DataFrame(export_list).to_csv(index=False),
+            file_name="Batch_Trade_Plan.csv",
+            mime="text/csv",
+        )
+
+# --- 2. The Stop Gate ---
 if not search_query:
-    st.info("Enter a stock symbol to get started.")
-    render_control_center() # Render tools when empty
-    st.stop() # Stop the heavy chart fetching
+    st.info("Enter a stock symbol above or use the Batch Processor to get started.")
+    st.stop()
 
 search_term = search_query.strip()
 if search_term != st.session_state["last_search_query"]:
@@ -791,50 +797,53 @@ except (IndexError, KeyError) as e:
     st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
     st.stop()
 
+st.divider()
+
+# --- 1% Risk Calculator (Decoupled & Synced) ---
+st.subheader("📐 1% Risk Calculator")
+st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
+
+# Auto-Sync Trigger
 if st.session_state["sync_ticker"] != full_ticker:
     st.session_state["sync_ticker"] = full_ticker
     st.session_state["entry_price_key"] = float(latest["Close"])
     st.session_state["stop_loss_key"] = float(support_val)
-    pass
 
-# ===================================================================
-# MAIN AREA — Visuals
-# ===================================================================
-
-# --- Batch Results View ---
-if "batch_results" in st.session_state:
-    st.markdown("---")
-    st.subheader("🔥 Watchlist Batch Results")
-    edited_df = st.data_editor(
-        st.session_state["batch_results"],
-        hide_index=True,
-        use_container_width=True
+col_input, col_pos = st.columns(2)
+with col_input:
+    capital = st.number_input(
+        "Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key"
     )
-    st.session_state["batch_results"] = edited_df
-    
-    selected_rows = edited_df[edited_df["Select"] == True]
-    if not selected_rows.empty:
-        cap = st.session_state.get("capital_ext", 100000.0)
-        export_list = []
-        for _, row in selected_rows.iterrows():
-            ep = row["Price"]
-            sl = row["Support1"]
-            shares = math.floor((cap * 0.01) / (ep - sl)) if ep > sl else 0
-            export_list.append({
-                "Ticker": row["Ticker"],
-                "Entry Price": ep,
-                "Stop Loss": sl,
-                "Shares to Buy": shares
-            })
-            
-        st.download_button(
-            label="⬇️ Download Trade Plan",
-            data=pd.DataFrame(export_list).to_csv(index=False),
-            file_name="Batch_Trade_Plan.csv",
-            mime="text/csv",
-        )
+    # Update capital_ext for batch use
+    st.session_state["capital_ext"] = capital
 
-# --- Visual Scoring (Gauge) & Metrics ---
+    entry_price = st.number_input(
+        "Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key"
+    )
+    stop_loss = st.number_input(
+        "Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key"
+    )
+
+with col_pos:
+    if entry_price > stop_loss:
+        max_risk = capital * 0.01
+        risk_per_share = entry_price - stop_loss
+        shares_to_buy = math.floor(max_risk / risk_per_share)
+        total_deployed = shares_to_buy * entry_price
+
+        if shares_to_buy > 0:
+            st.subheader("📊 Position Size")
+            st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
+            st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
+            st.metric("Shares to Buy", f"{shares_to_buy:,}")
+            st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+            if total_deployed > capital:
+                st.warning("⚠️ Position exceeds your total capital!")
+    else:
+        st.error("Entry Price must be greater than Stop-Loss Price.")
+
+st.divider()
+
 # --- Metrics Row ---
 c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
 c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
@@ -1049,12 +1058,10 @@ if articles:
 else:
     st.info("No recent news found.")
 
-render_control_center()
 
 # ===================================================================
 # Footer
 # ===================================================================
 st.divider()
 st.caption("Data sourced from Yahoo Finance. News via Google News. AI by Google Gemini. Built with Streamlit.")
-st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")
 st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")

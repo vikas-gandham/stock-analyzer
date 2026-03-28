@@ -124,15 +124,19 @@ st.markdown(
 
 @st.cache_data(ttl=900)
 def fetch_ohlcv(ticker: str) -> pd.DataFrame:
-    """Download 1 year of daily OHLCV data via yfinance."""
     try:
         end = datetime.today()
         start = end - timedelta(days=365)
         df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+        
+        if df.empty:
+            return pd.DataFrame()
+
+        # Fix MultiIndex columns if present
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # FIX: Silently drop duplicate dates returned by Yahoo Finance glitches
+        # CRITICAL FIX: Drop duplicate dates from Yahoo Finance
         df = df.loc[~df.index.duplicated(keep='first')].copy()
         
         return df
@@ -141,8 +145,11 @@ def fetch_ohlcv(ticker: str) -> pd.DataFrame:
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add 50/200 SMA and pivot-based support/resistance."""
+    if df.empty: return df
     df = df.copy()
+    # Ensure index is unique and sorted before TA calculations
+    df = df.loc[~df.index.duplicated(keep='first')].sort_index()
+    
     df["SMA_50"] = ta.sma(df["Close"], length=50)
     df["SMA_200"] = ta.sma(df["Close"], length=200)
 

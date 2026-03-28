@@ -125,61 +125,73 @@ st.markdown(
 @st.cache_data(ttl=900)
 def fetch_ohlcv(ticker: str) -> pd.DataFrame:
     try:
-        end = datetime.today()
-        start = end - timedelta(days=365)
-        df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+        df = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
+        if df.empty: return pd.DataFrame()
         
-        if df.empty:
-            return pd.DataFrame()
-
-        # Fix MultiIndex columns if present
+        # Force flatten columns and drop 'Ticker' level if yfinance added it
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-            
-        # CRITICAL FIX: Drop duplicate dates from Yahoo Finance
-        df = df.loc[~df.index.duplicated(keep='first')].copy()
         
-        return df
-    except Exception:
+        # Nuke duplicates and sort
+        df = df.loc[~df.index.duplicated(keep='first')]
+        return df.sort_index()
+    except:
         return pd.DataFrame()
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty: return df
-    df = df.copy()
-    # Ensure index is unique and sorted before TA calculations
-    df = df.loc[~df.index.duplicated(keep='first')].sort_index()
+    # 1. Force a clean copy with a unique index
+    df = df.copy().loc[~df.index.duplicated(keep='first')]
     
-    df["SMA_50"] = ta.sma(df["Close"], length=50)
-    df["SMA_200"] = ta.sma(df["Close"], length=200)
-
-    # Momentum/Trend indicators
-    adx_df = ta.adx(df["High"], df["Low"], df["Close"], length=14)
-    if adx_df is not None and not adx_df.empty:
-        df["ADX"] = adx_df.iloc[:, 0]
-    else:
-        df["ADX"] = 0
-    
+    # 2. Add indicators one by one using 'concat' instead of direct assignment
+    sma50 = ta.sma(df["Close"], length=50)
+    sma200 = ta.sma(df["Close"], length=200)
+    adx_res = ta.adx(df["High"], df["Low"], df["Close"], length=14)
     vol_sma = ta.sma(df["Volume"], length=20)
-    if vol_sma is not None and not vol_sma.empty:
-        df["Vol_20SMA"] = vol_sma.fillna(1)
-    else:
-        df["Vol_20SMA"] = 1
-
+    
+    # Force uppercase columns for uniform mapping
+    df.columns = [str(c).upper() for c in df.columns]
+    
+    df = pd.concat([df, sma50, sma200, adx_res, vol_sma], axis=1)
+    
+    # Rename specifically assigned columns
+    df = df.rename(columns={
+        'SMA_50': 'SMA_50', 
+        'SMA_200': 'SMA_200', 
+        'ADX_14': 'ADX',
+        'SMA_20': 'VOL_20SMA'
+    })
+    
+    # Pivot logic
     previous_window = df.iloc[-21:-1]
-    pp_high = previous_window["High"].max()
-    pp_low = previous_window["Low"].min()
-    pp_close = previous_window["Close"].iloc[-1]
+    if not previous_window.empty:
+        pp_high = previous_window["HIGH"].max()
+        pp_low = previous_window["LOW"].min()
+        pp_close = previous_window["CLOSE"].iloc[-1]
 
-    pivot = (pp_high + pp_low + pp_close) / 3
-    support_1 = 2 * pivot - pp_high
-    resistance_1 = 2 * pivot - pp_low
+        pivot = (pp_high + pp_low + pp_close) / 3
+        df["PIVOT"] = pivot
+        df["SUPPORT_1"] = 2 * pivot - pp_high
+        df["RESISTANCE_1"] = 2 * pivot - pp_low
+    else:
+        # Fallback if window is too small
+        last_close = df["CLOSE"].iloc[-1]
+        df["PIVOT"] = last_close
+        df["SUPPORT_1"] = last_close
+        df["RESISTANCE_1"] = last_close
+        
+    if "VOL_20SMA" not in df.columns:
+        df["VOL_20SMA"] = 1
 
-    df["Pivot"] = pivot
-    df["Support_1"] = support_1
-    df["Resistance_1"] = resistance_1
-
-    return df
+    # Map back to standard names for compatibility with the rest of the app
+    df = df.rename(columns={
+        'CLOSE': 'Close', 'HIGH': 'High', 'LOW': 'Low', 'OPEN': 'Open', 'VOLUME': 'Volume',
+        'PIVOT': 'Pivot', 'SUPPORT_1': 'Support_1', 'RESISTANCE_1': 'Resistance_1',
+        'VOL_20SMA': 'Vol_20SMA'
+    })
+    
+    return df.fillna(0)
 
 
 def check_earnings(ticker: str) -> Optional[datetime]:
@@ -505,8 +517,12 @@ def render_control_center():
 
         if run_scan and w_df is not None:
             try:
-                # Find ticker column
-                ticker_col = next((c for c in w_df.columns if c.lower() in ["ticker", "symbol", "name"]), None)
+                # Force Column Strip (Ensure no invisible spaces)
+                w_df.columns = [str(c).strip() for c in w_df.columns]
+                
+                # Find ticker column with expanded search terms
+                search_terms = ["ticker", "symbol", "name", "company name", "stock", "identifier"]
+                ticker_col = next((c for c in w_df.columns if any(term in str(c).lower() for term in search_terms)), None)
                 
                 if ticker_col:
                     tickers_to_scan = w_df[ticker_col].dropna().astype(str).unique().tolist()[:50]
@@ -535,7 +551,10 @@ def render_control_center():
                             if b_df.empty or len(b_df) < 50:
                                 continue
                                 
-                            b_df = compute_indicators(b_df)
+                            try:
+                                b_df = compute_indicators(b_df)
+                            except:
+                                continue
                             try:
                                 b_close = b_df["Close"].iloc[-1]
                                 b_sup1 = b_df["Support_1"].iloc[-1]
@@ -589,7 +608,7 @@ def render_control_center():
                             st.session_state["batch_results"] = res_df
                             st.success("Scan Complete! View results below.")
                 else:
-                    st.error("Could not find 'Name', 'Ticker', or 'Symbol' column in input data.")
+                    st.error(f"Could not find a Ticker/Name column. Detected headers: {list(w_df.columns)}")
             except Exception as e:
                 st.error(f"Error processing data: {e}")
 
@@ -1027,4 +1046,5 @@ render_control_center()
 # ===================================================================
 st.divider()
 st.caption("Data sourced from Yahoo Finance. News via Google News. AI by Google Gemini. Built with Streamlit.")
+st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")
 st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")

@@ -131,6 +131,10 @@ def fetch_ohlcv(ticker: str) -> pd.DataFrame:
         df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+            
+        # FIX: Silently drop duplicate dates returned by Yahoo Finance glitches
+        df = df.loc[~df.index.duplicated(keep='first')].copy()
+        
         return df
     except Exception:
         return pd.DataFrame()
@@ -672,23 +676,47 @@ company_name = get_company_name(full_ticker)
 
 try:
     with st.spinner("Fetching fundamentals..."):
-        info = yf.Ticker(full_ticker).info
-        roce = info.get("returnOnAssets")
-        if roce is None:
-            roce = info.get("returnOnCapitalEmployed", 0)
-            
+        tk = yf.Ticker(full_ticker)
+        info = tk.info
+        
+        # --- ROCE Logic ---
+        roce = info.get("returnOnCapitalEmployed") or info.get("returnOnEquity") or info.get("returnOnAssets", 0)
+        
+        if not roce or roce == 0:
+            try:
+                inc = tk.income_stmt
+                bs = tk.balance_sheet
+                if not inc.empty and not bs.empty:
+                    ebit = inc.loc['EBIT'].iloc[0] if 'EBIT' in inc.index else inc.loc['Operating Income'].iloc[0]
+                    ta = bs.loc['Total Assets'].iloc[0]
+                    cl = bs.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bs.index else 0
+                    ce = ta - cl
+                    roce = (ebit / ce) if ce > 0 else 0
+            except:
+                pass
+
         if roce is not None:
             roce = float(roce)
-            if roce < 2.0 and roce != 0.0:
-                roce *= 100
+            if -2.0 < roce < 2.0 and roce != 0.0: roce *= 100
         else:
             roce = 0.0
 
+        # --- Debt to Equity Logic ---
         debt_to_equity = info.get("debtToEquity", 0)
+        
+        if not debt_to_equity or debt_to_equity == 0:
+            try:
+                bs = tk.balance_sheet
+                if not bs.empty:
+                    td = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
+                    te = bs.loc['Stockholders Equity'].iloc[0] if 'Stockholders Equity' in bs.index else 1
+                    debt_to_equity = td / te
+            except:
+                pass
+                
         if debt_to_equity is not None:
             debt_to_equity = float(debt_to_equity)
-            if debt_to_equity > 5.0:
-                debt_to_equity /= 100
+            if debt_to_equity > 5.0: debt_to_equity /= 100
         else:
             debt_to_equity = 0.0
 except Exception:

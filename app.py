@@ -406,10 +406,8 @@ def get_analyst_rating(ticker: str) -> Optional[str]:
 
 
 def render_control_center():
-    st.markdown("---")
-    st.markdown("<h2>🛠️ Batch Scanner & AI Control</h2>", unsafe_allow_html=True)
-    
     # --- Row 1: Batch Processor (Full-Width) ---
+    st.markdown("<div style='padding-top: 2rem;'>", unsafe_allow_html=True)
     st.subheader("📂 Batch Processor")
     tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
     
@@ -566,21 +564,6 @@ def render_control_center():
             else:
                 st.warning("Please upload a file first.")
 
-    # Gemini API Key
-    st.divider()
-    st.subheader("🤖 AI Settings")
-
-    api_key = None
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("Gemini key loaded from secrets.")
-    except (KeyError, FileNotFoundError):
-        api_key = st.text_input(
-            "Gemini API Key",
-            type="password",
-            help="Get a free key at aistudio.google.com",
-        )
-    st.session_state["gemini_key"] = api_key
 
 
 # ===================================================================
@@ -762,13 +745,19 @@ if search_query:
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
             with c_gauge:
-                g_fig = go.Figure(go.Indicator(mode="gauge+number", value=s_score, title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 30], 'color': 'rgba(0, 212, 170, 0.3)'}, {'range': [30, 60], 'color': 'rgba(255, 215, 0, 0.3)'}, {'range': [60, 100], 'color': 'rgba(255, 75, 75, 0.3)'}]}))
+                # Color code safety number
+                gauge_num_color = "#00D4AA" if s_score <= 30 else "#FFD700" if s_score <= 60 else "#FF4B4B"
+                g_fig = go.Figure(go.Indicator(mode="gauge+number", value=s_score, number={'font': {'color': gauge_num_color}}, title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 30], 'color': 'rgba(0, 212, 170, 0.3)'}, {'range': [30, 60], 'color': 'rgba(255, 215, 0, 0.3)'}, {'range': [60, 100], 'color': 'rgba(255, 75, 75, 0.3)'}]}))
                 g_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
                 st.plotly_chart(g_fig, use_container_width=True)
+                st.markdown("<p style='text-align: center; color: gray;'><span style='color: #00D4AA;'>Safe</span> | <span style='color: #FFD700;'>Fair</span> | <span style='color: #FF4B4B;'>Overextended</span></p>", unsafe_allow_html=True)
             with c_mom:
-                adx_fig = go.Figure(go.Indicator(mode="gauge+number", value=adx_v, title={'text': "Trend Strength (ADX)", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 25], 'color': 'gray'}, {'range': [25, 50], 'color': 'green'}, {'range': [50, 100], 'color': 'darkgreen'}]}))
+                # Color code ADX number
+                adx_num_color = "#808080" if adx_v <= 25 else "#00D4AA" if adx_v <= 50 else "#006400"
+                adx_fig = go.Figure(go.Indicator(mode="gauge+number", value=adx_v, number={'font': {'color': adx_num_color}}, title={'text': "Trend Strength (ADX)", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 25], 'color': 'gray'}, {'range': [25, 50], 'color': 'green'}, {'range': [50, 100], 'color': 'darkgreen'}]}))
                 adx_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
                 st.plotly_chart(adx_fig, use_container_width=True)
+                st.markdown("<p style='text-align: center; color: gray;'><span style='color: #808080;'>Weak</span> | <span style='color: #00D4AA;'>Strong</span> | <span style='color: #006400;'>Very Strong</span></p>", unsafe_allow_html=True)
 
             # --- Chart & Earnings ---
             earnings_date = check_earnings(full_ticker)
@@ -809,14 +798,14 @@ if search_query:
                 st.session_state["entry_price_key"] = float(latest["Close"])
                 st.session_state["stop_loss_key"] = float(support_val)
 
-            col_input, col_pos = st.columns(2)
-            with col_input:
+            c_calc, c_gap, c_pos = st.columns([4.5, 1, 4.5])
+            with c_calc:
                 capital = st.number_input("Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key")
                 st.session_state["capital_ext"] = capital
                 entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
                 stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
 
-            with col_pos:
+            with c_pos:
                 if entry_price > stop_loss:
                     max_risk = capital * 0.01
                     risk_per_share = entry_price - stop_loss
@@ -877,6 +866,21 @@ if "batch_results" in st.session_state and st.session_state["batch_results"] is 
 # ===================================================================
 # Footer
 # ===================================================================
+st.divider()
+st.subheader("🤖 AI Settings")
+
+api_key = None
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    st.success("Gemini key loaded from secrets.")
+except (KeyError, FileNotFoundError):
+    api_key = st.text_input(
+        "Gemini API Key",
+        type="password",
+        help="Get a free key at aistudio.google.com",
+    )
+st.session_state["gemini_key"] = api_key
+
 st.divider()
 st.caption("Data sourced from Yahoo Finance. News via Google News. AI by Google Gemini. Built with Streamlit.")
 st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")

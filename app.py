@@ -148,7 +148,12 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["ADX"] = adx_df.iloc[:, 0]
     else:
         df["ADX"] = 0
-    df["Vol_20SMA"] = ta.sma(df["Volume"], length=20).fillna(1)
+    
+    vol_sma = ta.sma(df["Volume"], length=20)
+    if vol_sma is not None and not vol_sma.empty:
+        df["Vol_20SMA"] = vol_sma.fillna(1)
+    else:
+        df["Vol_20SMA"] = 1
 
     previous_window = df.iloc[-21:-1]
     pp_high = previous_window["High"].max()

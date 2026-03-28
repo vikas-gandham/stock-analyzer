@@ -35,7 +35,7 @@ if "entry_price_key" not in st.session_state:
 if "stop_loss_key" not in st.session_state:
     st.session_state["stop_loss_key"] = 95.0
 if "capital_key" not in st.session_state:
-    st.session_state["capital_key"] = 100000.0
+    st.session_state["capital_key"] = 300000.0
 if "sync_ticker" not in st.session_state:
     st.session_state["sync_ticker"] = None
 if "last_search_query" not in st.session_state:
@@ -43,7 +43,7 @@ if "last_search_query" not in st.session_state:
 if "search_results" not in st.session_state:
     st.session_state["search_results"] = []
 if "capital_ext" not in st.session_state:
-    st.session_state["capital_ext"] = 100000.0
+    st.session_state["capital_ext"] = 300000.0
 
 # ---------------------------------------------------------------------------
 # Custom CSS
@@ -499,6 +499,28 @@ def render_control_center():
 
                                     is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
 
+                                    # Master Algorithmic Rating for Batch
+                                    m_score = 0
+                                    if b_score <= 30: m_score += 2
+                                    elif b_score <= 60: m_score += 1
+                                    
+                                    b_adx = b_df["ADX"].iloc[-1] if not pd.isna(b_df["ADX"].iloc[-1]) else 0
+                                    if b_adx >= 50: m_score += 2
+                                    elif b_adx >= 25: m_score += 1
+                                    
+                                    b_vol = b_df["Volume"].iloc[-1]
+                                    b_vol20 = b_df["Vol_20SMA"].iloc[-1]
+                                    if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
+                                    v_ratio = b_vol / b_vol20
+                                    
+                                    if v_ratio >= 1.5: m_score += 2
+                                    elif v_ratio >= 1.0: m_score += 1
+                                    
+                                    if m_score >= 5: m_rating = "🟢 STRONG BUY"
+                                    elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
+                                    elif m_score >= 1: m_rating = "🟡 HOLD"
+                                    else: m_rating = "🔴 AVOID"
+
                                     results.append({
                                         "Select": False,
                                         "Ticker": t_sym,
@@ -506,7 +528,8 @@ def render_control_center():
                                         "Support1": round(b_sup1, 2),
                                         "Risk to Stop %": round(risk_pct, 2),
                                         "Safety Score": b_score,
-                                        "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO"
+                                        "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
+                                        "Master Rating": m_rating
                                     })
                                 except (IndexError, KeyError):
                                     pass

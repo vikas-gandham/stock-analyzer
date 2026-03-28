@@ -528,8 +528,12 @@ def render_control_center():
                     tickers_to_scan = w_df[ticker_col].dropna().astype(str).unique().tolist()[:50]
 
                     with st.spinner("Scanning Watchlist (Top 50)..."):
+                        # Clear old results to ensure persistence freshness
+                        st.session_state["batch_results"] = None
                         results = []
-                        for t in tickers_to_scan:
+                        progress_text = st.empty()
+                        for i, t in enumerate(tickers_to_scan):
+                            progress_text.text(f"🔍 Scanning {i+1}/{len(tickers_to_scan)}: {t}...")
                             # 1. Standardize variable name to 't_sym'
                             clean_name = str(t).strip()
                             
@@ -603,10 +607,16 @@ def render_control_center():
                                 })
                             except (IndexError, KeyError):
                                 pass
+                        
+                        # Clear the progress bar after completion
+                        progress_text.empty()
+                        
                         if results:
-                            res_df = pd.DataFrame(results).sort_values("Risk to Stop %")
-                            st.session_state["batch_results"] = res_df
-                            st.success("Scan Complete! View results below.")
+                            st.session_state["batch_results"] = pd.DataFrame(results).sort_values("Risk to Stop %")
+                            st.success(f"✅ Success: {len(results)} stocks matched your 8-point criteria.")
+                        else:
+                            st.error("❌ No stocks passed the scan.")
+                            st.info("Possible reasons: 1. Tickers not found on Yahoo Finance. 2. Stocks didn't meet the 'Strong Buy' technical threshold. 3. Data is currently loading/glitching.")
                 else:
                     st.error(f"Could not find a Ticker/Name column. Detected headers: {list(w_df.columns)}")
             except Exception as e:

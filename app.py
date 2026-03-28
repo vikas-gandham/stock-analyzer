@@ -530,22 +530,23 @@ def render_control_center():
                     with st.spinner("Scanning Watchlist (Top 50)..."):
                         results = []
                         for t in tickers_to_scan:
-                            # 1. Clean the name from the paste (remove S.No or extra spaces)
+                            # 1. Standardize variable name to 't_sym'
                             clean_name = str(t).strip()
-
-                            # 2. Try to find the actual Ticker using yfinance search
+                            
+                            # 2. PROXY SEARCH: Turn 'Aditya Vision' into 'ADITYAVISION.NS'
                             try:
-                                search_results = yf.Search(clean_name, max_results=1).quotes
-                                if search_results:
-                                    # Grab the first result's symbol (e.g., 'ONGC.NS')
-                                    batch_ticker = search_results[0].get('symbol', clean_name.replace(" ", "").upper() + ".NS")
+                                s_res = yf.Search(clean_name, max_results=1).quotes
+                                if s_res:
+                                    sym = s_res[0].get('symbol', '')
+                                    # Ensure it has an Indian suffix
+                                    t_sym = sym if (".NS" in sym or ".BO" in sym) else f"{sym}.NS"
                                 else:
-                                    # Fallback to a guess if search fails
-                                    batch_ticker = clean_name.replace(" ", "").upper() + ".NS"
+                                    t_sym = clean_name.upper().replace(" ", "") + ".NS"
                             except Exception:
-                                batch_ticker = clean_name.replace(" ", "").upper() + ".NS"
+                                t_sym = clean_name.upper().replace(" ", "") + ".NS"
 
-                            b_df = fetch_ohlcv(batch_ticker)
+                            # 3. Fetch and Compute using the corrected 't_sym'
+                            b_df = fetch_ohlcv(t_sym)
                             
                             if b_df.empty or len(b_df) < 50:
                                 continue

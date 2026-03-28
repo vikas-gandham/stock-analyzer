@@ -434,8 +434,25 @@ def render_control_center():
             if st.button("Run Paste Scan", type="primary"):
                 if pasted_data:
                     try:
-                        w_df = pd.read_csv(io.StringIO(pasted_data), sep='\t')
-                        run_scan = True
+                        # Read without headers to prevent immediate duplicate crash
+                        raw_df = pd.read_csv(io.StringIO(pasted_data), sep='\t', header=None)
+                        if not raw_df.empty:
+                            # Use first row as columns, force them to strings, make them unique
+                            cols = raw_df.iloc[0].astype(str).tolist()
+                            safe_cols = []
+                            seen = set()
+                            for c in cols:
+                                clean_c = c.strip()
+                                if clean_c in seen or clean_c == "" or clean_c.lower() == "nan":
+                                    i = 1
+                                    while f"Drop_{i}" in seen: i += 1
+                                    clean_c = f"Drop_{i}"
+                                safe_cols.append(clean_c)
+                                seen.add(clean_c)
+                            
+                            w_df = raw_df[1:].copy()
+                            w_df.columns = safe_cols
+                            run_scan = True
                     except Exception as e:
                         st.error(f"Format error: {e}")
                 else:
@@ -458,23 +475,6 @@ def render_control_center():
 
         if run_scan and w_df is not None:
             try:
-                # BRUTE-FORCE COLUMN RENAMING (Bypasses .loc reindex errors)
-                new_cols = []
-                seen = set()
-                for col in w_df.columns:
-                    c_name = str(col).strip()
-                    # If duplicate, blank, or 'nan', give it a unique safe name
-                    if c_name in seen or c_name == "" or c_name.lower() == "nan":
-                        i = 1
-                        while f"Drop_{i}" in seen:
-                            i += 1
-                        c_name = f"Drop_{i}"
-                    
-                    new_cols.append(c_name)
-                    seen.add(c_name)
-                
-                w_df.columns = new_cols
-                
                 # Now safely find the ticker/name column
                 lower_cols = [c.lower() for c in w_df.columns]
                 ticker_col = None
@@ -600,12 +600,10 @@ with col_sym:
         key="search_input",
     )
 
-# Render Control Center initially below the search bar
-render_control_center()
-
 if not search_query:
     st.info("Enter a stock symbol to get started.")
-    st.stop()
+    render_control_center() # Render tools when empty
+    st.stop() # Stop the heavy chart fetching
 
 search_term = search_query.strip()
 if search_term != st.session_state["last_search_query"]:
@@ -969,6 +967,7 @@ if articles:
 else:
     st.info("No recent news found.")
 
+render_control_center()
 
 # ===================================================================
 # Footer

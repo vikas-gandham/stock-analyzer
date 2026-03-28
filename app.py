@@ -458,6 +458,8 @@ def render_control_center():
 
         if run_scan and w_df is not None:
             try:
+                # Strip duplicates to prevent "cannot reindex" errors
+                w_df = w_df.loc[:, ~w_df.columns.duplicated()].copy()
                 w_df.columns = [str(c).strip() for c in w_df.columns]
                 lower_cols = [c.lower() for c in w_df.columns]
                 ticker_col = None
@@ -582,6 +584,9 @@ with col_sym:
         placeholder="e.g., Narmada, RELIANCE, TCS",
         key="search_input",
     )
+
+# Render Control Center initially below the search bar
+render_control_center()
 
 if not search_query:
     st.info("Enter a stock symbol to get started.")
@@ -949,7 +954,6 @@ if articles:
 else:
     st.info("No recent news found.")
 
-render_control_center()
 
 # ===================================================================
 # Footer

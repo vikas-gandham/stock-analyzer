@@ -458,9 +458,24 @@ def render_control_center():
 
         if run_scan and w_df is not None:
             try:
-                # Strip duplicates to prevent "cannot reindex" errors
-                w_df = w_df.loc[:, ~w_df.columns.duplicated()].copy()
-                w_df.columns = [str(c).strip() for c in w_df.columns]
+                # BRUTE-FORCE COLUMN RENAMING (Bypasses .loc reindex errors)
+                new_cols = []
+                seen = set()
+                for col in w_df.columns:
+                    c_name = str(col).strip()
+                    # If duplicate, blank, or 'nan', give it a unique safe name
+                    if c_name in seen or c_name == "" or c_name.lower() == "nan":
+                        i = 1
+                        while f"Drop_{i}" in seen:
+                            i += 1
+                        c_name = f"Drop_{i}"
+                    
+                    new_cols.append(c_name)
+                    seen.add(c_name)
+                
+                w_df.columns = new_cols
+                
+                # Now safely find the ticker/name column
                 lower_cols = [c.lower() for c in w_df.columns]
                 ticker_col = None
                 for c, lc in zip(w_df.columns, lower_cols):

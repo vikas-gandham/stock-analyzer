@@ -6,6 +6,7 @@ Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
 
 import io
 import math
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -120,6 +121,22 @@ st.markdown(
 # ===================================================================
 # HELPER FUNCTIONS
 # ===================================================================
+
+def load_csv(file_path: str, columns: list) -> pd.DataFrame:
+    """Load CSV or return an empty DataFrame with specified columns."""
+    if not os.path.exists(file_path):
+        df = pd.DataFrame(columns=columns)
+        df.to_csv(file_path, index=False)
+        return df
+    try:
+        return pd.read_csv(file_path)
+    except Exception:
+        return pd.DataFrame(columns=columns)
+
+
+def save_csv(file_path: str, df: pd.DataFrame):
+    """Save a DataFrame to CSV."""
+    df.to_csv(file_path, index=False)
 
 
 @st.cache_data(ttl=900)
@@ -405,6 +422,88 @@ def get_analyst_rating(ticker: str) -> Optional[str]:
         return None
 
 
+@st.cache_data(ttl=3600)
+def fetch_fundamentals(ticker: str):
+    """Fetch key fundamental metrics for a ticker."""
+    try:
+        tk = yf.Ticker(ticker)
+        info = tk.info
+        roce = info.get("returnOnCapitalEmployed") or info.get("returnOnEquity") or info.get("returnOnAssets", 0)
+        if not roce or roce == 0:
+            try:
+                inc = tk.income_stmt
+                bs = tk.balance_sheet
+                if not inc.empty and not bs.empty:
+                    ebit = inc.loc['EBIT'].iloc[0] if 'EBIT' in inc.index else inc.loc['Operating Income'].iloc[0]
+                    ta = bs.loc['Total Assets'].iloc[0]
+                    cl = bs.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bs.index else 0
+                    ce = ta - cl
+                    roce = (ebit / ce) if ce > 0 else 0
+            except: pass
+        if roce is not None:
+            roce = float(roce)
+            if -2.0 < roce < 2.0 and roce != 0.0: roce *= 100
+        else: roce = 0.0
+
+        debt_to_equity = info.get("debtToEquity", 0)
+        if not debt_to_equity or debt_to_equity == 0:
+            try:
+                bs = tk.balance_sheet
+                if not bs.empty:
+                    td = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
+                    te = bs.loc['Stockholders Equity'].iloc[0] if 'Stockholders Equity' in bs.index else 1
+                    debt_to_equity = td / te
+            except: pass
+        if debt_to_equity is not None:
+            debt_to_equity = float(debt_to_equity)
+            if debt_to_equity > 5.0: debt_to_equity /= 100
+        else: debt_to_equity = 0.0
+        
+        return {"roce": roce, "debt_to_equity": debt_to_equity}
+    except Exception:
+        return {"roce": 0.0, "debt_to_equity": 0.0}
+
+
+def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
+    """Calculate the 8-point Master Rating score."""
+    if df.empty: return 0, 0, 0, 0, 0
+    latest = df.iloc[-1]
+    support_val = df["Support_1"].iloc[-1]
+    resistance_val = df["Resistance_1"].iloc[-1]
+    
+    # 1. Safety Score
+    s_points = 0
+    if resistance_val > support_val:
+        raw_s = ((latest["Close"] - support_val) / (resistance_val - support_val)) * 100
+        s_score = max(0, min(100, int(raw_s)))
+    else: s_score = 50
+    if s_score <= 30: s_points = 2
+    elif s_score <= 60: s_points = 1
+    
+    # 2. Trend (ADX)
+    t_points = 0
+    adx_v = latest.get("ADX", 0)
+    if adx_v >= 50: t_points = 2
+    elif adx_v >= 25: t_points = 1
+    
+    # 3. Vol (Volume Surge)
+    v_points = 0
+    vol_today = latest.get("Volume", 1)
+    vol_20sma = latest.get("Vol_20SMA", 1)
+    if pd.isna(vol_20sma) or vol_20sma == 0: vol_20sma = 1
+    v_ratio = vol_today / vol_20sma
+    if v_ratio >= 1.5: v_points = 2
+    elif v_ratio >= 1.0: v_points = 1
+    
+    # 4. Funda
+    f_points = 0
+    if fundamentals["roce"] > 15: f_points += 1
+    if fundamentals["debt_to_equity"] < 0.5: f_points += 1
+    
+    total_score = s_points + t_points + v_points + f_points
+    return total_score, t_points, v_points, s_points, f_points
+
+
 def render_control_center():
     # --- Row 1: Batch Processor (Full-Width) ---
     st.markdown("<div style='padding-top: 2rem;'>", unsafe_allow_html=True)
@@ -633,43 +732,10 @@ if search_query:
         df = compute_indicators(df)
         company_name = get_company_name(full_ticker)
 
-        try:
-            with st.spinner("Fetching fundamentals..."):
-                tk = yf.Ticker(full_ticker)
-                info = tk.info
-                roce = info.get("returnOnCapitalEmployed") or info.get("returnOnEquity") or info.get("returnOnAssets", 0)
-                if not roce or roce == 0:
-                    try:
-                        inc = tk.income_stmt
-                        bs = tk.balance_sheet
-                        if not inc.empty and not bs.empty:
-                            ebit = inc.loc['EBIT'].iloc[0] if 'EBIT' in inc.index else inc.loc['Operating Income'].iloc[0]
-                            ta = bs.loc['Total Assets'].iloc[0]
-                            cl = bs.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bs.index else 0
-                            ce = ta - cl
-                            roce = (ebit / ce) if ce > 0 else 0
-                    except: pass
-                if roce is not None:
-                    roce = float(roce)
-                    if -2.0 < roce < 2.0 and roce != 0.0: roce *= 100
-                else: roce = 0.0
-
-                debt_to_equity = info.get("debtToEquity", 0)
-                if not debt_to_equity or debt_to_equity == 0:
-                    try:
-                        bs = tk.balance_sheet
-                        if not bs.empty:
-                            td = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
-                            te = bs.loc['Stockholders Equity'].iloc[0] if 'Stockholders Equity' in bs.index else 1
-                            debt_to_equity = td / te
-                    except: pass
-                if debt_to_equity is not None:
-                    debt_to_equity = float(debt_to_equity)
-                    if debt_to_equity > 5.0: debt_to_equity /= 100
-                else: debt_to_equity = 0.0
-        except Exception:
-            roce = 0.0
-            debt_to_equity = 0.0
+        with st.spinner("Fetching fundamentals..."):
+            funda = fetch_fundamentals(full_ticker)
+            roce = funda["roce"]
+            debt_to_equity = funda["debt_to_equity"]
 
         analyst_rec = get_analyst_rating(full_ticker)
         if analyst_rec:
@@ -719,28 +785,35 @@ if search_query:
             h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color="normal" if v_ratio_raw >= 1.5 else "off")
 
             # --- Master Rating ---
-            score = 0
-            if resistance_val > support_val:
-                raw_s = ((latest["Close"] - support_val) / (resistance_val - support_val)) * 100
-                s_score = max(0, min(100, int(raw_s)))
-            else: s_score = 50
-            if s_score <= 30: score += 2
-            elif s_score <= 60: score += 1
-            adx_v = latest.get("ADX", 0)
-            if adx_v >= 50: score += 2
-            elif adx_v >= 25: score += 1
-            if v_ratio_raw >= 1.5: score += 2
-            elif v_ratio_raw >= 1.0: score += 1
-            if roce > 15: score += 1
-            if debt_to_equity < 0.5: score += 1
+            score, t_points, v_points, s_points, f_points = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
 
             if score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
             elif score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
             elif score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
             else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
 
-            rating_html = f'<div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;"><div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div></div>'
+            rating_html = f'''
+            <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
+                <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div>
+                <div style="font-size: 0.9em; color: gray; margin-top: 5px;">
+                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2
+                </div>
+            </div>
+            '''
             st.markdown(rating_html, unsafe_allow_html=True)
+            
+            # --- Pin to Watchlist Button ---
+            w_col1, w_col2, w_col3 = st.columns([1, 1, 1])
+            with w_col2:
+                if st.button("⭐ Pin to Watchlist", use_container_width=True):
+                    w_df = load_csv("watchlist.csv", ["Ticker"])
+                    if full_ticker not in w_df["Ticker"].values:
+                        new_row = pd.DataFrame([{"Ticker": full_ticker}])
+                        w_df = pd.concat([w_df, new_row], ignore_index=True)
+                        save_csv("watchlist.csv", w_df)
+                        st.success(f"Pinned {full_ticker} to Watchlist!")
+                    else:
+                        st.info(f"{full_ticker} is already in Watchlist.")
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -817,6 +890,18 @@ if search_query:
                         st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
                         st.metric("Shares to Buy", f"{shares_to_buy:,}")
                         st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                        
+                        if st.button("💼 Add to Portfolio", type="primary", use_container_width=True):
+                            p_df = load_csv("portfolio.csv", ["Ticker", "Buy Price", "Qty"])
+                            new_trade = pd.DataFrame([{
+                                "Ticker": full_ticker,
+                                "Buy Price": entry_price,
+                                "Qty": shares_to_buy
+                            }])
+                            p_df = pd.concat([p_df, new_trade], ignore_index=True)
+                            save_csv("portfolio.csv", p_df)
+                            st.success(f"Added {shares_to_buy} shares of {full_ticker} to Portfolio!")
+                            
                         if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
                 else: st.error("Entry Price must be greater than Stop-Loss Price.")
 
@@ -824,6 +909,116 @@ if search_query:
 
         except (IndexError, KeyError) as e:
             st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
+
+# ===================================================================
+# LIVE PORTFOLIO & WATCHLIST — Middle Layer
+# ===================================================================
+st.markdown("---")
+col_p1, col_p2 = st.columns([1, 1])
+
+with col_p1:
+    st.subheader("💼 Live Portfolio")
+    with st.expander("➕ Add Existing Trade Manually"):
+        m_ticker = st.text_input("Ticker", placeholder="e.g. RELIANCE.NS")
+        m_price = st.number_input("Average Buy Price", min_value=0.0, value=0.0)
+        m_qty = st.number_input("Quantity", min_value=1, value=1)
+        if st.button("Save to Portfolio"):
+            if m_ticker:
+                clean_t = m_ticker.strip().upper()
+                if ".NS" not in clean_t and ".BO" not in clean_t: clean_t += ".NS"
+                p_df = load_csv("portfolio.csv", ["Ticker", "Buy Price", "Qty"])
+                new_row = pd.DataFrame([{"Ticker": clean_t, "Buy Price": m_price, "Qty": m_qty}])
+                p_df = pd.concat([p_df, new_row], ignore_index=True)
+                save_csv("portfolio.csv", p_df)
+                st.success(f"Added {clean_t} to Portfolio!")
+                st.rerun()
+
+    p_df = load_csv("portfolio.csv", ["Ticker", "Buy Price", "Qty"])
+    if not p_df.empty:
+        # Header Row
+        h_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
+        h_col[0].markdown("**Ticker**")
+        h_col[1].markdown("**P&L%**")
+        h_col[2].markdown("**Status**")
+        h_col[3].markdown("**Master**")
+        h_col[4].markdown("**Action**")
+        h_col[5].markdown("**Delete**")
+        
+        for idx, row in p_df.iterrows():
+            ticker = row["Ticker"]
+            buy_price = row["Buy Price"]
+            
+            p_data = fetch_ohlcv(ticker)
+            if not p_data.empty:
+                p_data = compute_indicators(p_data)
+                funda = fetch_fundamentals(ticker)
+                score, _, _, _, _ = calculate_master_score(p_data, funda)
+                cmp = p_data["Close"].iloc[-1]
+                s1 = p_data["Support_1"].iloc[-1]
+                pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
+                
+                # Exit Logic
+                if cmp < s1: status, color = "🚨 SELL (Below Support)", "#FF4B4B"
+                elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
+                else: status, color = "✅ HOLD", "#00D4AA"
+                
+                r_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
+                r_col[0].write(ticker)
+                r_col[1].write(f"{pnl:+.2f}%")
+                r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
+                r_col[3].write(f"Rating: {score}/8")
+                if r_col[4].button("Analyze", key=f"p_an_{ticker}_{idx}"):
+                    st.session_state["search_input"] = ticker
+                    st.rerun()
+                if r_col[5].button("🗑️", key=f"p_del_{ticker}_{idx}"):
+                    p_df = p_df.drop(idx)
+                    save_csv("portfolio.csv", p_df)
+                    st.rerun()
+    else:
+        st.info("Portfolio is empty. Add trades manually or from the calculator.")
+
+with col_p2:
+    st.subheader("⭐ Watchlist")
+    w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)")
+    if w_input:
+        clean_w = w_input.strip().upper()
+        if ".NS" not in clean_w and ".BO" not in clean_w: clean_w += ".NS"
+        w_df = load_csv("watchlist.csv", ["Ticker"])
+        if clean_w not in w_df["Ticker"].values:
+            new_row = pd.DataFrame([{"Ticker": clean_w}])
+            w_df = pd.concat([w_df, new_row], ignore_index=True)
+            save_csv("watchlist.csv", w_df)
+            st.success(f"Added {clean_w} to Watchlist!")
+            st.rerun()
+
+    w_df = load_csv("watchlist.csv", ["Ticker"])
+    if not w_df.empty:
+        # Header
+        wh_col = st.columns([3, 2, 2, 2])
+        wh_col[0].markdown("**Ticker**")
+        wh_col[1].markdown("**Price**")
+        wh_col[2].markdown("**Action**")
+        wh_col[3].markdown("**Delete**")
+        
+        for idx, row in w_df.iterrows():
+            ticker = row["Ticker"]
+            w_data = fetch_ohlcv(ticker)
+            price_str = "N/A"
+            if not w_data.empty:
+                price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
+            
+            wr_col = st.columns([3, 2, 2, 2])
+            wr_col[0].write(ticker)
+            wr_col[1].write(price_str)
+            if wr_col[2].button("Analyze", key=f"w_an_{ticker}_{idx}"):
+                st.session_state["search_input"] = ticker
+                st.rerun()
+            if wr_col[3].button("🗑️", key=f"w_del_{ticker}_{idx}"):
+                w_df = w_df.drop(idx)
+                save_csv("watchlist.csv", w_df)
+                st.rerun()
+    else:
+        st.info("Watchlist is empty. Search and pin stocks or add manually.")
 
 # ===================================================================
 # BATCH ENGINE — Persistent Bottom Layer
@@ -834,16 +1029,44 @@ render_control_center()
 if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
     st.markdown("---")
     st.subheader("🔥 Watchlist Batch Results")
+    
+    # Custom display for Batch Results to include 'Analyze' button
+    b_results = st.session_state["batch_results"]
+    if not b_results.empty:
+        # Header
+        bh_col = st.columns([1, 2, 2, 2, 2, 2, 3])
+        bh_col[1].markdown("**Ticker**")
+        bh_col[2].markdown("**Price**")
+        bh_col[3].markdown("**Support**")
+        bh_col[4].markdown("**Safety**")
+        bh_col[5].markdown("**Rating**")
+        bh_col[6].markdown("**Action**")
+        
+        for idx, row in b_results.iterrows():
+            rb_col = st.columns([1, 2, 2, 2, 2, 2, 3])
+            # We keep the Select column as a checkbox if needed, but here we just show buttons
+            rb_col[1].write(row["Ticker"])
+            rb_col[2].write(f"₹{row['Price']}")
+            rb_col[3].write(f"₹{row['Support1']}")
+            rb_col[4].write(row["Safety Score"])
+            rb_col[5].write(row["Master Rating"])
+            if rb_col[6].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
+                st.session_state["search_input"] = row["Ticker"]
+                st.rerun()
+    
+    # Still keep the data editor for selecting rows (Batch Export)
+    st.markdown("##### 📝 Batch Trade Plan Exporter")
     edited_df = st.data_editor(
         st.session_state["batch_results"],
         hide_index=True,
-        use_container_width=True
+        use_container_width=True,
+        key="batch_editor"
     )
     st.session_state["batch_results"] = edited_df
     
     selected_rows = edited_df[edited_df["Select"] == True]
     if not selected_rows.empty:
-        cap = st.session_state.get("capital_ext", 100000.0)
+        cap = st.session_state.get("capital_ext", 300000.0)
         export_list = []
         for _, row in selected_rows.iterrows():
             ep = row["Price"]
@@ -873,10 +1096,11 @@ api_key = None
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     st.success("Gemini key loaded from secrets.")
-except (KeyError, FileNotFoundError):
+except (Exception):
     api_key = st.text_input(
         "Gemini API Key",
         type="password",
+        value=st.session_state.get("gemini_key", ""),
         help="Get a free key at aistudio.google.com",
     )
 st.session_state["gemini_key"] = api_key

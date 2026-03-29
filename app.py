@@ -627,10 +627,13 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
 
 
 def render_control_center():
-    # --- Row 1: Batch Processor (Full-Width) ---
+    # --- Row 1: Batch Processor (Side-by-Side Split) ---
     st.markdown("<div style='padding-top: 2rem;'>", unsafe_allow_html=True)
-    st.subheader("📂 Batch Processor")
-    tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
+    c_left, c_right = st.columns(2, gap="large")
+    
+    with c_left:
+        st.subheader("📂 Batch Processor")
+        tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
     
     def run_batch_scan(w_df):
         try:
@@ -784,6 +787,37 @@ def render_control_center():
                     st.error(f"File reading error: {e}")
             else:
                 st.warning("Please upload a file first.")
+                        
+    # --- Row 1: Batch Results (Right Side) ---
+    with c_right:
+        if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
+            st.subheader("🔥 Watchlist Batch Results")
+            b_results = st.session_state["batch_results"]
+            if not b_results.empty:
+                # Header
+                bh_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
+                bh_col[0].markdown("**Ticker**")
+                bh_col[1].markdown("**Price**")
+                bh_col[2].markdown("**Support**")
+                bh_col[3].markdown("**Safety**")
+                bh_col[4].markdown("**Rating**")
+                bh_col[5].markdown("**Action**")
+                
+                for idx, row in b_results.iterrows():
+                    rb_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
+                    rb_col[0].write(row["Ticker"])
+                    rb_col[1].write(f"₹{row['Price']}")
+                    rb_col[2].write(f"₹{row['Support1']}")
+                    rb_col[3].write(row["Safety Score"])
+                    rb_col[4].write(row["Master Rating"])
+                    if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
+                        trigger_analysis(row["Ticker"])
+            else:
+                st.info("❌ No stocks passed the scan.")
+        else:
+            st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+            st.subheader("🔥 Watchlist Batch Results")
+            st.markdown("<p style='color: gray; padding-top: 10px;'>Results will appear here after scanning.</p>", unsafe_allow_html=True)
 
 
 
@@ -1161,6 +1195,7 @@ with col_p1:
 
 with col_p2:
     st.subheader("⭐ Watchlist")
+    w_input = ""
     if st.session_state["sheets_error"]:
         st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
     else:
@@ -1252,43 +1287,10 @@ with col_p2:
         st.info("Watchlist is empty. Search and pin stocks or add manually.")
 
 # ===================================================================
-# BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side)
+# BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side Split)
 # ===================================================================
 st.markdown("---")
-col_upload, col_results = st.columns([1, 1], gap="large")
-
-with col_upload:
-    render_control_center()
-
-with col_results:
-    if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
-        st.subheader("🔥 Watchlist Batch Results")
-        b_results = st.session_state["batch_results"]
-        if not b_results.empty:
-            # Header
-            bh_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
-            bh_col[0].markdown("**Ticker**")
-            bh_col[1].markdown("**Price**")
-            bh_col[2].markdown("**Support**")
-            bh_col[3].markdown("**Safety**")
-            bh_col[4].markdown("**Rating**")
-            bh_col[5].markdown("**Action**")
-            
-            for idx, row in b_results.iterrows():
-                rb_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
-                rb_col[0].write(row["Ticker"])
-                rb_col[1].write(f"₹{row['Price']}")
-                rb_col[2].write(f"₹{row['Support1']}")
-                rb_col[3].write(row["Safety Score"])
-                rb_col[4].write(row["Master Rating"])
-                if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
-                    trigger_analysis(row["Ticker"])
-        else:
-            st.info("❌ No stocks passed the scan.")
-    else:
-        st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
-        st.subheader("🔥 Watchlist Batch Results")
-        st.markdown("<p style='color: gray; padding-top: 10px;'>Results will appear here after scanning.</p>", unsafe_allow_html=True)
+render_control_center()
 
 # 📝 Batch Trade Plan Exporter
 if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:

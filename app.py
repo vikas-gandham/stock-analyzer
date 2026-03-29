@@ -169,11 +169,10 @@ if "search_input" not in st.session_state:
 if "last_search_query" not in st.session_state:
     st.session_state["last_search_query"] = ""
 
-def trigger_analysis(ticker: str):
-    """Callback to sync search input and force a rerun for analysis."""
+def set_search_ticker(ticker: str):
+    """Callback triggered by any 'Analyze' button to sync the search bar."""
     st.session_state["search_input"] = str(ticker)
-    st.session_state["last_search_query"] = "" # Force change detection
-    st.rerun()
+    st.session_state["last_search_query"] = "" # Force change detection for the main analysis block
 
 
 # ===================================================================
@@ -810,8 +809,8 @@ def render_control_center():
                     rb_col[2].write(f"₹{row['Support1']}")
                     rb_col[3].write(row["Safety Score"])
                     rb_col[4].write(row["Master Rating"])
-                    if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
-                        trigger_analysis(row["Ticker"])
+                    if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}", on_click=set_search_ticker, args=(row["Ticker"],)):
+                        pass
             else:
                 st.info("❌ No stocks passed the scan.")
         else:
@@ -830,18 +829,12 @@ st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboa
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
-    # Warp Search Bar Sync
+    # Warp Search Bar Sync - Streamlit binds this widget to st.session_state['search_input']
     search_query = st.text_input(
         "Search Company Name or Ticker",
-        value=st.session_state["search_input"],
         placeholder="e.g., Narmada, RELIANCE, TCS",
-        key="main_search_bar",
+        key="search_input",
     )
-    
-    # Trigger Rerun on Sync change
-    if search_query != st.session_state["search_input"]:
-        st.session_state["search_input"] = search_query
-        st.rerun()
 
 
 if search_query:
@@ -1171,8 +1164,8 @@ with col_p1:
                     r_col[1].write(f"{pnl:+.2f}%")
                     r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
                     r_col[3].write(f"Rating: {score}/8")
-                    if r_col[4].button("Analyze", key=f"p_an_{clean_ticker}_{idx}"):
-                        trigger_analysis(clean_ticker)
+                    if r_col[4].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                        pass
                     if r_col[5].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
                         p_df = p_df.drop(idx)
                         save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
@@ -1263,8 +1256,8 @@ with col_p2:
                         wr_col[2].write(f"{scr_w}/8")
                         wr_col[3].markdown(f"<span style='color:{safety_clr};'>{safety_txt}</span>", unsafe_allow_html=True)
                         wr_col[4].write(s1_val)
-                        if wr_col[5].button("Analyze", key=f"w_an_{clean_ticker}_{idx}"):
-                            trigger_analysis(clean_ticker)
+                        if wr_col[5].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                            pass
                         if wr_col[6].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
                             w_df = w_df.drop(idx)
                             save_sheet_data("Watchlist", w_df, ["Ticker"])

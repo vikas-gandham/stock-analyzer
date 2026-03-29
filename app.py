@@ -32,6 +32,27 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# BROWSER WARP & SCROLL ANCHOR (Hard-Reload Strategy)
+# ---------------------------------------------------------------------------
+# Hidden Anchor at the very top
+st.markdown("<div id='top'></div>", unsafe_allow_html=True)
+
+if st.session_state.get('force_top_reload'):
+    # The JavaScript 'Hammer' - Definitively force parent scroll/reload
+    components.html('''
+        <script>
+            try {
+                window.parent.location.hash = "top";
+                window.parent.scrollTo(0, 0);
+            } catch(e) {
+                console.log("Cross-origin scroll blocked, trying hash warp...");
+                window.parent.location.hash = "top";
+            }
+        </script>
+    ''', height=0)
+    st.session_state['force_top_reload'] = False
+
+# ---------------------------------------------------------------------------
 # INITIALIZE SESSION STATE
 # ---------------------------------------------------------------------------
 if "entry_price_key" not in st.session_state:
@@ -58,6 +79,8 @@ if "m_qty_input" not in st.session_state:
     st.session_state["m_qty_input"] = 1
 if "w_ticker_input" not in st.session_state:
     st.session_state["w_ticker_input"] = ""
+if "force_top_reload" not in st.session_state:
+    st.session_state["force_top_reload"] = False
 
 # ---------------------------------------------------------------------------
 # Custom CSS
@@ -174,8 +197,9 @@ def set_search_ticker(ticker: str):
     """Callback triggered by any 'Analyze' button to sync the search bar."""
     st.session_state["search_input"] = str(ticker)
     st.session_state["last_search_query"] = None # Force detection on all platforms (mobile inclusive)
-    # Auto-scroll to top (Smooth Section Scroll)
-    st.components.v1.html('<script>window.parent.document.querySelector("section.main").scrollTo({top: 0, behavior: "smooth"});</script>', height=0)
+    st.session_state["force_top_reload"] = True # Set flag for top-level warp
+    # Trigger hash jump
+    components.html('<script>try { window.parent.location.hash = "top"; } catch(e) {}</script>', height=0)
 
 
 # ===================================================================

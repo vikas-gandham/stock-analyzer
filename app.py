@@ -995,10 +995,19 @@ if search_query:
                     total_deployed = shares_to_buy * entry_price
                     if shares_to_buy > 0:
                         st.subheader("📊 Position Size")
-                        st.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
-                        st.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
-                        st.metric("Shares to Buy", f"{shares_to_buy:,}")
-                        st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                        # Row 1: Max Risk & Risk Per Share
+                        r1_c1, r1_c2 = st.columns(2)
+                        r1_c1.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
+                        r1_c2.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
+                        
+                        st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
+                        
+                        # Row 2: Shares & Capital Deployed
+                        r2_c1, r2_c2 = st.columns(2)
+                        r2_c1.metric("Shares to Buy", f"{shares_to_buy:,}")
+                        r2_c2.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                        
+                        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                         
                         if st.button("💼 Add to Portfolio", type="primary", use_container_width=True):
                             clean_p = sanitize_ticker(full_ticker)
@@ -1219,40 +1228,48 @@ with col_p2:
         st.info("Watchlist is empty. Search and pin stocks or add manually.")
 
 # ===================================================================
-# BATCH ENGINE — Persistent Bottom Layer
+# BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side)
 # ===================================================================
 st.markdown("---")
-render_control_center()
+col_upload, col_results = st.columns([1, 1], gap="large")
 
+with col_upload:
+    render_control_center()
+
+with col_results:
+    if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
+        st.subheader("🔥 Watchlist Batch Results")
+        b_results = st.session_state["batch_results"]
+        if not b_results.empty:
+            # Header
+            bh_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
+            bh_col[0].markdown("**Ticker**")
+            bh_col[1].markdown("**Price**")
+            bh_col[2].markdown("**Support**")
+            bh_col[3].markdown("**Safety**")
+            bh_col[4].markdown("**Rating**")
+            bh_col[5].markdown("**Action**")
+            
+            for idx, row in b_results.iterrows():
+                rb_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
+                rb_col[0].write(row["Ticker"])
+                rb_col[1].write(f"₹{row['Price']}")
+                rb_col[2].write(f"₹{row['Support1']}")
+                rb_col[3].write(row["Safety Score"])
+                rb_col[4].write(row["Master Rating"])
+                if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
+                    st.session_state["search_input"] = str(sanitize_ticker(row["Ticker"]))
+                    st.rerun()
+        else:
+            st.info("❌ No stocks passed the scan.")
+    else:
+        st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+        st.subheader("🔥 Watchlist Batch Results")
+        st.markdown("<p style='color: gray; padding-top: 10px;'>Results will appear here after scanning.</p>", unsafe_allow_html=True)
+
+# 📝 Batch Trade Plan Exporter
 if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
     st.markdown("---")
-    st.subheader("🔥 Watchlist Batch Results")
-    
-    # Custom display for Batch Results to include 'Analyze' button
-    b_results = st.session_state["batch_results"]
-    if not b_results.empty:
-        # Header
-        bh_col = st.columns([1, 2, 2, 2, 2, 2, 3])
-        bh_col[1].markdown("**Ticker**")
-        bh_col[2].markdown("**Price**")
-        bh_col[3].markdown("**Support**")
-        bh_col[4].markdown("**Safety**")
-        bh_col[5].markdown("**Rating**")
-        bh_col[6].markdown("**Action**")
-        
-        for idx, row in b_results.iterrows():
-            rb_col = st.columns([1, 2, 2, 2, 2, 2, 3])
-            # We keep the Select column as a checkbox if needed, but here we just show buttons
-            rb_col[1].write(row["Ticker"])
-            rb_col[2].write(f"₹{row['Price']}")
-            rb_col[3].write(f"₹{row['Support1']}")
-            rb_col[4].write(row["Safety Score"])
-            rb_col[5].write(row["Master Rating"])
-            if rb_col[6].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
-                st.session_state["search_input"] = str(sanitize_ticker(row["Ticker"]))
-                st.rerun()
-    
-    # Still keep the data editor for selecting rows (Batch Export)
     st.markdown("##### 📝 Batch Trade Plan Exporter")
     edited_df = st.data_editor(
         st.session_state["batch_results"],

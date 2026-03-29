@@ -363,10 +363,20 @@ def run_scheduled_scan():
     meta_df = load_sheet_data("Metadata", ["Key", "Value"])
     last_scan_val = "None"
     if not meta_df.empty and "last_scan_time" in meta_df["Key"].values:
-        last_scan_val = meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"].values[0]
+        last_scan_val = str(meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"].values[0])
 
-    # Find the latest window that has passsd and see if it was scanned
-    # Simple logic: If current time >= Scan Window and last_scan != current_date_window, then scan
+    # 1. First-Load / Empty History Fail-Safe
+    if last_scan_val == "None":
+        background_batch_scan()
+        sync_now = datetime.now().strftime("%I:%M %p")
+        new_meta = pd.DataFrame([
+            {"Key": "last_scan_time", "Value": f"{current_date_str}_INIT"},
+            {"Key": "last_sync_actual", "Value": sync_now}
+        ])
+        save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+        return
+
+    # 2. Daily Schedule Loop
     for window in reversed(SCAN_WINDOWS):
         if current_time_str >= window:
             window_scan_key = f"{current_date_str}_{window}"
@@ -393,9 +403,17 @@ def render_status_hub():
     w_df = load_sheet_data("Watchlist", ["Signal"])
     
     # Defaults
-    window_label = "No Scans Today"
+    now = datetime.now()
+    is_weekend = now.weekday() in [5, 6]
+    window_label = "📡 Initializing System..." if not meta_df.empty and meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"].values[0] == "None" else "No Scans Today"
     sync_time = "N/A"
+    weekend_tag = ""
     
+    # Weekend Auto-Fill Logic
+    if is_weekend:
+        window_label = "15:15 Final Scan (Friday Close)"
+        weekend_tag = "<div style='font-size: 0.75rem; color: #FFD700; margin-top: 2px;'>🗓️ Weekend Mode: Showing Friday Close</div>"
+
     # Parse Metadata
     if not meta_df.empty:
         l_window = meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"]
@@ -436,6 +454,7 @@ def render_status_hub():
                     <div>
                         <div class="status-header">📡 Last Scan Window</div>
                         <div class="status-val">{window_label}</div>
+                        {weekend_tag}
                     </div>
                     <div>
                         <div class="status-header">⏱️ Sync Time</div>
@@ -449,8 +468,22 @@ def render_status_hub():
                         </div>
                     </div>
                 </div>
+                <div style="padding-top: 10px; border-top: 1px solid #333; margin-top: 10px;">
+                    <div id="force_scan_btn"></div>
+                </div>
             </div>
         ''', unsafe_allow_html=True)
+        
+        # Force Scan Button
+        if st.button("🔄 Force System Scan", use_container_width=True):
+            background_batch_scan()
+            sync_now = datetime.now().strftime("%I:%M %p")
+            new_meta = pd.DataFrame([
+                {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
+                {"Key": "last_sync_actual", "Value": sync_now}
+            ])
+            save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+            st.rerun()
 
 
 @st.cache_data(ttl=900)

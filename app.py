@@ -226,7 +226,16 @@ def ensure_worksheets_exist(conn):
         try:
             conn.read(worksheet="Metadata", ttl=0)
         except Exception:
-            conn.create(worksheet="Metadata", data=pd.DataFrame([{"Key": "last_scan_time", "Value": "None"}]))
+            conn.create(worksheet="Metadata", data=pd.DataFrame([
+                {"Key": "last_scan_time", "Value": "None"},
+                {"Key": "last_sync_actual", "Value": "N/A"}
+            ]))
+
+        # 4. ScanHistory (Logging)
+        try:
+            conn.read(worksheet="ScanHistory", ttl=0)
+        except Exception:
+            conn.create(worksheet="ScanHistory", data=pd.DataFrame(columns=["Window", "Timestamp", "SignalCount"]))
             
     except Exception:
         # Flag error but do not stop the app
@@ -384,20 +393,20 @@ def render_status_hub():
     w_df = load_sheet_data("Watchlist", ["Signal"])
     
     # Defaults
-    window_label = "Checking..."
+    window_label = "No Scans Today"
     sync_time = "N/A"
     
     # Parse Metadata
     if not meta_df.empty:
         l_window = meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"]
-        if not l_window.empty:
+        if not l_window.empty and pd.notna(l_window.iloc[0]) and "_" in str(l_window.iloc[0]):
             # Extract time from 'YYYY-MM-DD_HH:MM'
-            w_time = l_window.values[0].split("_")[-1]
+            w_time = str(l_window.iloc[0]).split("_")[-1]
             window_label = f"{w_time} Decision Zone"
         
         l_sync = meta_df.loc[meta_df["Key"] == "last_sync_actual", "Value"]
-        if not l_sync.empty:
-            sync_time = l_sync.values[0]
+        if not l_sync.empty and pd.notna(l_sync.iloc[0]):
+            sync_time = str(l_sync.iloc[0])
 
     # Count Signals
     sell_alerts = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) if not p_df.empty else 0
@@ -1056,7 +1065,10 @@ with col_sym:
     )
 
 # --- 📡 SCAN STATUS HUB (NEW) ---
-render_status_hub()
+try:
+    render_status_hub()
+except Exception as e:
+    st.error(f"⚠️ Status Hub Sync Error: {e}")
 
 
 if search_query:
@@ -1366,7 +1378,7 @@ with col_p1:
         
         for idx, row in p_df.iterrows():
             ticker = row["Ticker"]
-            if not ticker or pd.isna(ticker): continue
+            if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
             clean_ticker = sanitize_ticker(ticker)
             buy_price = row["Buy_Price"]
             
@@ -1462,7 +1474,7 @@ with col_p2:
             for idx, row in w_df.iterrows():
                 time.sleep(0.05) # Minor throttle for yfinance
                 ticker = row["Ticker"]
-                if not ticker or pd.isna(ticker): continue
+                if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
                 clean_ticker = sanitize_ticker(ticker)
                 try:
                     w_data = fetch_ohlcv(clean_ticker)

@@ -1264,7 +1264,7 @@ with col_p1:
                         p_df.loc[p_df["Ticker"] == clean_t, ["Buy_Price", "Quantity"]] = [m_price, m_qty]
                         st.info(f"Updated {clean_t} in Portfolio.")
                     else:
-                        new_row = pd.DataFrame([{"Ticker": clean_t, "Buy_Price": m_price, "Quantity": m_qty}])
+                        new_row = pd.DataFrame([{"Ticker": clean_t, "Buy_Price": m_price, "Quantity": m_qty, "Signal": "✅ HOLD"}])
                         p_df = pd.concat([p_df, new_row], ignore_index=True)
                         st.success(f"Added {clean_t} to Portfolio!")
                     
@@ -1275,13 +1275,14 @@ with col_p1:
     p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
     if not p_df.empty:
         # Header Row
-        h_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
+        h_col = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 0.5])
         h_col[0].markdown("**Ticker**")
-        h_col[1].markdown("**P&L%**")
+        h_col[1].markdown("**P&L %**")
         h_col[2].markdown("**Status**")
         h_col[3].markdown("**Master**")
-        h_col[4].markdown("**Action**")
-        h_col[5].markdown("**Delete**")
+        h_col[4].markdown("**Signal**")
+        h_col[5].markdown("**Action**")
+        h_col[6].markdown("**Delete**")
         
         for idx, row in p_df.iterrows():
             ticker = row["Ticker"]
@@ -1314,16 +1315,17 @@ with col_p1:
                     elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
                     else: status, color = "✅ HOLD", "#00D4AA"
                     
-                    r_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
+                    r_col = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 0.5])
                     r_col[0].write(clean_ticker)
                     r_col[1].write(f"{pnl:+.2f}%")
                     r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
                     r_col[3].write(f"Rating: {score}/8")
-                    if r_col[4].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                    r_col[4].write(str(row.get("Signal", "✅ HOLD")))
+                    if r_col[5].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                         pass
-                    if r_col[5].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
+                    if r_col[6].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
                         p_df = p_df.drop(idx)
-                        save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                        save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
                         st.rerun()
                 else:
                     r_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
@@ -1348,13 +1350,13 @@ with col_p2:
         st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
     else:
         w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
-    w_df = load_sheet_data("Watchlist", ["Ticker"])
+    w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
     if w_input:
         clean_w = sanitize_ticker(w_input)
         if clean_w not in w_df["Ticker"].values:
-            new_row = pd.DataFrame([{"Ticker": clean_w}])
+            new_row = pd.DataFrame([{"Ticker": clean_w, "Signal": "Neutral"}])
             w_df = pd.concat([w_df, new_row], ignore_index=True)
-            save_sheet_data("Watchlist", w_df, ["Ticker"])
+            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
             st.success(f"Added {clean_w} to Watchlist!")
         else:
             st.info(f"{clean_w} is already in Watchlist.")
@@ -1364,14 +1366,15 @@ with col_p2:
 
     if not w_df.empty:
         # Header
-        wh_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
+        wh_col = st.columns([1.5, 1, 1, 1.2, 1.5, 1.2, 1, 0.5])
         wh_col[0].markdown("**Ticker**")
         wh_col[1].markdown("**Price**")
         wh_col[2].markdown("**Rating**")
-        wh_col[3].markdown("**Safety**")
-        wh_col[4].markdown("**S1 Support**")
-        wh_col[5].markdown("**Action**")
-        wh_col[6].markdown("**Delete**")
+        wh_col[3].markdown("**Condition**")
+        wh_col[4].markdown("**Signal**")
+        wh_col[5].markdown("**Support**")
+        wh_col[6].markdown("**Analyze**")
+        wh_col[7].markdown("**🗑️**")
         
         # Wrapped Container with Throttle to prevent 'SHREERAMA.NS' errors
         with st.container():
@@ -1403,17 +1406,18 @@ with col_p2:
                         # Unified Marker Logic
                         w_label, w_color, _ = get_market_condition(w_data)
                         
-                        wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
+                        wr_col = st.columns([1.5, 1, 1, 1.2, 1.5, 1.2, 1, 0.5])
                         wr_col[0].write(clean_ticker)
                         wr_col[1].write(price_str)
                         wr_col[2].write(f"{scr_w}/8")
                         wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
-                        wr_col[4].write(s1_val)
-                        if wr_col[5].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                        wr_col[4].write(str(row.get("Signal", "Neutral")))
+                        wr_col[5].write(s1_val)
+                        if wr_col[6].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                             pass
-                        if wr_col[6].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
+                        if wr_col[7].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
                             w_df = w_df.drop(idx)
-                            save_sheet_data("Watchlist", w_df, ["Ticker"])
+                            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
                             st.rerun()
                     else:
                         wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])

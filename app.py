@@ -46,6 +46,8 @@ if "search_results" not in st.session_state:
     st.session_state["search_results"] = []
 if "capital_ext" not in st.session_state or st.session_state["capital_ext"] == 0.0:
     st.session_state["capital_ext"] = 300000.0
+if "sheets_error" not in st.session_state:
+    st.session_state["sheets_error"] = False
 if "m_ticker_input" not in st.session_state:
     st.session_state["m_ticker_input"] = ""
 if "m_price_input" not in st.session_state:
@@ -128,7 +130,7 @@ st.markdown(
 
 
 # ===================================================================
-# DATA CONNECTION (Google Sheets)
+# DATA CONNECTION (Google Sheets) — Non-Blocking & Robust
 # ===================================================================
 
 def ensure_worksheets_exist(conn):
@@ -147,26 +149,42 @@ def ensure_worksheets_exist(conn):
             conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Quantity"]))
             
     except Exception:
-        st.error("⚠️ Google Sheets Connection Error: Please check your Streamlit Secrets and Sheet URL.")
-        st.stop()
+        # Flag error but do not stop the app
+        st.session_state["sheets_error"] = True
 
 
-# Set up connection to Google Sheets
+# Global Connection Handle
+conn = None
+
+# 1. Robust Secrets Check
+if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
+    st.session_state["sheets_error"] = True
+
+# 2. Key Sanitization (As Requested)
 try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    ensure_worksheets_exist(conn)
+    if not st.session_state["sheets_error"]:
+        private_key = st.secrets["connections"]["gsheets"]["private_key"].replace('\\n', '\n').strip()
 except Exception:
-    st.error("⚠️ Google Sheets Connection Error: Please check your Streamlit Secrets and Sheet URL.")
-    st.stop()
+    st.session_state["sheets_error"] = True
+
+# 3. Main Connection Initialization (Bypass hard-stop)
+if not st.session_state["sheets_error"]:
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        ensure_worksheets_exist(conn)
+    except Exception:
+        st.session_state["sheets_error"] = True
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
-    """Read a worksheet from Google Sheets with ttl=0 and self-healing."""
+    """Read a worksheet with non-blocking error handling."""
+    if st.session_state["sheets_error"] or conn is None:
+        return pd.DataFrame(columns=columns)
     try:
         df = conn.read(worksheet=worksheet, ttl=0)
         if df is None or df.empty:
             return pd.DataFrame(columns=columns)
-        # Ensure all requested columns exist
+        # Ensure all columns exist
         df = df.dropna(how="all")
         for col in columns:
             if col not in df.columns:
@@ -177,7 +195,10 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
 
 
 def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
-    """Update a worksheet in Google Sheets, creating it if missing."""
+    """Update a worksheet with non-blocking error handling."""
+    if st.session_state["sheets_error"] or conn is None:
+        st.error("⚠️ Cannot save: Google Sheets Connection is currently offline.")
+        return
     if df.empty:
         df = pd.DataFrame(columns=columns)
     try:
@@ -977,13 +998,16 @@ col_p1, col_p2 = st.columns([1, 1])
 
 with col_p1:
     st.subheader("💼 Live Portfolio")
-    with st.expander("➕ Add Existing Trade Manually"):
-        m_ticker = st.text_input("Ticker", placeholder="e.g. RELIANCE.NS", key="m_ticker_input")
-        m_price = st.number_input("Average Buy Price", min_value=0.0, step=1.0, key="m_price_input")
-        m_qty = st.number_input("Quantity", min_value=1, step=1, key="m_qty_input")
-        if st.button("Save to Portfolio"):
-            if m_ticker:
-                clean_t = m_ticker.strip().upper()
+    if st.session_state["sheets_error"]:
+        st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
+    else:
+        with st.expander("➕ Add Existing Trade Manually"):
+            m_ticker = st.text_input("Ticker", placeholder="e.g. RELIANCE.NS", key="m_ticker_input")
+            m_price = st.number_input("Average Buy Price", min_value=0.0, step=1.0, key="m_price_input")
+            m_qty = st.number_input("Quantity", min_value=1, step=1, key="m_qty_input")
+            if st.button("Save to Portfolio"):
+                if m_ticker:
+                    clean_t = m_ticker.strip().upper()
                 if ".NS" not in clean_t and ".BO" not in clean_t: clean_t += ".NS"
                 p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
                 
@@ -1050,7 +1074,10 @@ with col_p1:
 
 with col_p2:
     st.subheader("⭐ Watchlist")
-    w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
+    if st.session_state["sheets_error"]:
+        st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
+    else:
+        w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
     w_df = load_sheet_data("Watchlist", ["Ticker"])
     if w_input:
         clean_w = w_input.strip().upper()

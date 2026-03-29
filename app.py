@@ -348,6 +348,16 @@ def background_batch_scan():
                             w_df.at[idx, "Signal"] = "Neutral"
                 except: pass
             save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
+            
+        # 3. Log to ScanHistory
+        try:
+            sig_count = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) + len(w_df[w_df["Signal"] == "🔥 BUY NOW"])
+            now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+            h_df = load_sheet_data("ScanHistory", ["Window", "Timestamp", "SignalCount"])
+            new_log = pd.DataFrame([{"Window": "Auto/Manual", "Timestamp": now_ts, "SignalCount": sig_count}])
+            h_df = pd.concat([h_df, new_log], ignore_index=True)
+            save_sheet_data("ScanHistory", h_df, ["Window", "Timestamp", "SignalCount"])
+        except Exception: pass
 
 
 def run_scheduled_scan():

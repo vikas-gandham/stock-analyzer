@@ -6,6 +6,7 @@ Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
 
 import io
 import math
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -157,6 +158,22 @@ def sanitize_ticker(ticker: str) -> str:
         "TATA STEEL.NS": "TATASTEEL.NS"
     }
     return TYPO_MAP.get(t, t)
+
+
+# ===================================================================
+# ORCHESTRATION & STATE HELPERS
+# ===================================================================
+
+if "search_input" not in st.session_state:
+    st.session_state["search_input"] = ""
+if "last_search_query" not in st.session_state:
+    st.session_state["last_search_query"] = ""
+
+def trigger_analysis(ticker: str):
+    """Callback to sync search input and force a rerun for analysis."""
+    st.session_state["search_input"] = str(ticker)
+    st.session_state["last_search_query"] = "" # Force change detection
+    st.rerun()
 
 
 # ===================================================================
@@ -779,12 +796,18 @@ st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboa
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
+    # Warp Search Bar Sync
     search_query = st.text_input(
         "Search Company Name or Ticker",
-        value="",
+        value=st.session_state["search_input"],
         placeholder="e.g., Narmada, RELIANCE, TCS",
-        key="search_input",
+        key="main_search_bar",
     )
+    
+    # Trigger Rerun on Sync change
+    if search_query != st.session_state["search_input"]:
+        st.session_state["search_input"] = search_query
+        st.rerun()
 
 
 if search_query:
@@ -1115,8 +1138,7 @@ with col_p1:
                     r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
                     r_col[3].write(f"Rating: {score}/8")
                     if r_col[4].button("Analyze", key=f"p_an_{clean_ticker}_{idx}"):
-                        st.session_state["search_input"] = str(clean_ticker)
-                        st.rerun()
+                        trigger_analysis(clean_ticker)
                     if r_col[5].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
                         p_df = p_df.drop(idx)
                         save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
@@ -1168,62 +1190,64 @@ with col_p2:
         wh_col[5].markdown("**Action**")
         wh_col[6].markdown("**Delete**")
         
-        for idx, row in w_df.iterrows():
-            ticker = row["Ticker"]
-            clean_ticker = sanitize_ticker(ticker)
-            try:
-                w_data = fetch_ohlcv(clean_ticker)
-                
-                # Force Sync / Smart Search Fallback
-                if w_data.empty:
-                    try:
-                        search_res = yf.Search(clean_ticker, max_results=1).quotes
-                        if search_res:
-                            new_sym = search_res[0]['symbol']
-                            w_data = fetch_ohlcv(new_sym)
-                            clean_ticker = new_sym
-                    except Exception: pass
+        # Wrapped Container with Throttle to prevent 'SHREERAMA.NS' errors
+        with st.container():
+            for idx, row in w_df.iterrows():
+                time.sleep(0.05) # Minor throttle for yfinance
+                ticker = row["Ticker"]
+                clean_ticker = sanitize_ticker(ticker)
+                try:
+                    w_data = fetch_ohlcv(clean_ticker)
+                    
+                    # Force Sync / Smart Search Fallback
+                    if w_data.empty:
+                        try:
+                            search_res = yf.Search(clean_ticker, max_results=1).quotes
+                            if search_res:
+                                new_sym = search_res[0]['symbol']
+                                w_data = fetch_ohlcv(new_sym)
+                                clean_ticker = new_sym
+                        except Exception: pass
 
-                if not w_data.empty:
-                    w_data = compute_indicators(w_data)
-                    f_w = fetch_fundamentals(clean_ticker)
-                    scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
-                    
-                    price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
-                    s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
-                    
-                    # Safety Status
-                    if s_pts_w == 2: safety_txt, safety_clr = "Safe", "#00D4AA"
-                    elif s_pts_w == 1: safety_txt, safety_clr = "Fair", "#FFD700"
-                    else: safety_txt, safety_clr = "Overextended", "#FF4B4B"
-                    
-                    wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
-                    wr_col[0].write(clean_ticker)
-                    wr_col[1].write(price_str)
-                    wr_col[2].write(f"{scr_w}/8")
-                    wr_col[3].markdown(f"<span style='color:{safety_clr};'>{safety_txt}</span>", unsafe_allow_html=True)
-                    wr_col[4].write(s1_val)
-                    if wr_col[5].button("Analyze", key=f"w_an_{clean_ticker}_{idx}"):
-                        st.session_state["search_input"] = str(clean_ticker)
-                        st.rerun()
-                    if wr_col[6].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
-                        w_df = w_df.drop(idx)
-                        save_sheet_data("Watchlist", w_df, ["Ticker"])
-                        st.rerun()
-                else:
-                    wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
-                    wr_col[0].write(f"⚠️ {clean_ticker}")
-                    wr_col[1].write("N/A")
-                    wr_col[2].write("N/A")
-                    wr_col[3].write("N/A")
-                    wr_col[4].write("N/A")
-                    wr_col[5].write("")
-                    if wr_col[6].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
-                        w_df = w_df.drop(idx)
-                        save_sheet_data("Watchlist", w_df, ["Ticker"])
-                        st.rerun()
-            except Exception:
-                st.error(f"Error processing {clean_ticker}")
+                    if not w_data.empty:
+                        w_data = compute_indicators(w_data)
+                        f_w = fetch_fundamentals(clean_ticker)
+                        scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
+                        
+                        price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
+                        s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
+                        
+                        # Safety Status
+                        if s_pts_w == 2: safety_txt, safety_clr = "Safe", "#00D4AA"
+                        elif s_pts_w == 1: safety_txt, safety_clr = "Fair", "#FFD700"
+                        else: safety_txt, safety_clr = "Overextended", "#FF4B4B"
+                        
+                        wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
+                        wr_col[0].write(clean_ticker)
+                        wr_col[1].write(price_str)
+                        wr_col[2].write(f"{scr_w}/8")
+                        wr_col[3].markdown(f"<span style='color:{safety_clr};'>{safety_txt}</span>", unsafe_allow_html=True)
+                        wr_col[4].write(s1_val)
+                        if wr_col[5].button("Analyze", key=f"w_an_{clean_ticker}_{idx}"):
+                            trigger_analysis(clean_ticker)
+                        if wr_col[6].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
+                            w_df = w_df.drop(idx)
+                            save_sheet_data("Watchlist", w_df, ["Ticker"])
+                            st.rerun()
+                    else:
+                        wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
+                        wr_col[0].write(f"⚠️ {clean_ticker}")
+                        wr_col[1].write("N/A")
+                        wr_col[2].write("N/A")
+                        wr_col[3].write("N/A")
+                        wr_col[4].write("N/A")
+                        wr_col[5].write("")
+                        if wr_col[6].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
+                            w_df = w_df.drop(idx)
+                            save_sheet_data("Watchlist", w_df, ["Ticker"])
+                            st.rerun()
+                except Exception:
+                    st.error(f"Error processing {clean_ticker}")
     else:
         st.info("Watchlist is empty. Search and pin stocks or add manually.")
 
@@ -1258,8 +1282,7 @@ with col_results:
                 rb_col[3].write(row["Safety Score"])
                 rb_col[4].write(row["Master Rating"])
                 if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
-                    st.session_state["search_input"] = str(sanitize_ticker(row["Ticker"]))
-                    st.rerun()
+                    trigger_analysis(row["Ticker"])
         else:
             st.info("❌ No stocks passed the scan.")
     else:

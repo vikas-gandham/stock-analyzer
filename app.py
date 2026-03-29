@@ -15,6 +15,7 @@ import pandas_ta as ta
 import plotly.graph_objects as go
 import gspread
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 from gnews import GNews
 from plotly.subplots import make_subplots
@@ -172,7 +173,9 @@ if "last_search_query" not in st.session_state:
 def set_search_ticker(ticker: str):
     """Callback triggered by any 'Analyze' button to sync the search bar."""
     st.session_state["search_input"] = str(ticker)
-    st.session_state["last_search_query"] = "" # Force change detection for the main analysis block
+    st.session_state["last_search_query"] = None # Force detection on all platforms (mobile inclusive)
+    # Auto-scroll to top
+    components.html('<script>window.parent.document.querySelector(".main").scrollTo(0,0);</script>', height=0)
 
 
 # ===================================================================
@@ -962,14 +965,14 @@ if search_query:
             # --- Pin to Watchlist Button ---
             w_col1, w_col2, w_col3 = st.columns([1, 1, 1])
             with w_col2:
-                if st.button("⭐ Pin to Watchlist", use_container_width=True):
+                if st.button("➕ Add to Watchlist", use_container_width=True):
                     clean_p = sanitize_ticker(full_ticker)
                     w_df = load_sheet_data("Watchlist", ["Ticker"])
                     if clean_p not in w_df["Ticker"].values:
                         new_row = pd.DataFrame([{"Ticker": clean_p}])
                         w_df = pd.concat([w_df, new_row], ignore_index=True)
                         save_sheet_data("Watchlist", w_df, ["Ticker"])
-                        st.success(f"Pinned {clean_p} to Watchlist!")
+                        st.success(f"Added {clean_p} to Watchlist!")
                     else:
                         st.info(f"{clean_p} is already in Watchlist.")
                     st.rerun()

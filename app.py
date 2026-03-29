@@ -6,7 +6,6 @@ Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
 
 import io
 import math
-import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -17,6 +16,7 @@ import streamlit as st
 import yfinance as yf
 from gnews import GNews
 from plotly.subplots import make_subplots
+from streamlit_gsheets import GSheetsConnection
 
 # ---------------------------------------------------------------------------
 # Page configuration — MUST be the very first Streamlit command
@@ -119,24 +119,26 @@ st.markdown(
 
 
 # ===================================================================
-# HELPER FUNCTIONS
+# DATA CONNECTION (Google Sheets)
 # ===================================================================
 
-def load_csv(file_path: str, columns: list) -> pd.DataFrame:
-    """Load CSV or return an empty DataFrame with specified columns."""
-    if not os.path.exists(file_path):
-        df = pd.DataFrame(columns=columns)
-        df.to_csv(file_path, index=False)
-        return df
+# Set up connection to Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
+    """Read a worksheet from Google Sheets with ttl=0."""
     try:
-        return pd.read_csv(file_path)
+        df = conn.read(worksheet=worksheet, ttl=0)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=columns)
+        return df.dropna(how="all")
     except Exception:
         return pd.DataFrame(columns=columns)
 
 
-def save_csv(file_path: str, df: pd.DataFrame):
-    """Save a DataFrame to CSV."""
-    df.to_csv(file_path, index=False)
+def save_sheet_data(worksheet: str, df: pd.DataFrame):
+    """Update a worksheet in Google Sheets."""
+    conn.update(worksheet=worksheet, data=df)
 
 
 @st.cache_data(ttl=900)
@@ -806,11 +808,11 @@ if search_query:
             w_col1, w_col2, w_col3 = st.columns([1, 1, 1])
             with w_col2:
                 if st.button("⭐ Pin to Watchlist", use_container_width=True):
-                    w_df = load_csv("watchlist.csv", ["Ticker"])
+                    w_df = load_sheet_data("Watchlist", ["Ticker"])
                     if full_ticker not in w_df["Ticker"].values:
                         new_row = pd.DataFrame([{"Ticker": full_ticker}])
                         w_df = pd.concat([w_df, new_row], ignore_index=True)
-                        save_csv("watchlist.csv", w_df)
+                        save_sheet_data("Watchlist", w_df)
                         st.success(f"Pinned {full_ticker} to Watchlist!")
                     else:
                         st.info(f"{full_ticker} is already in Watchlist.")
@@ -892,14 +894,14 @@ if search_query:
                         st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
                         
                         if st.button("💼 Add to Portfolio", type="primary", use_container_width=True):
-                            p_df = load_csv("portfolio.csv", ["Ticker", "Buy Price", "Qty"])
+                            p_df = load_sheet_data("Portfolio", ["Ticker", "Buy Price", "Qty"])
                             new_trade = pd.DataFrame([{
                                 "Ticker": full_ticker,
                                 "Buy Price": entry_price,
                                 "Qty": shares_to_buy
                             }])
                             p_df = pd.concat([p_df, new_trade], ignore_index=True)
-                            save_csv("portfolio.csv", p_df)
+                            save_sheet_data("Portfolio", p_df)
                             st.success(f"Added {shares_to_buy} shares of {full_ticker} to Portfolio!")
                             
                         if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
@@ -926,14 +928,14 @@ with col_p1:
             if m_ticker:
                 clean_t = m_ticker.strip().upper()
                 if ".NS" not in clean_t and ".BO" not in clean_t: clean_t += ".NS"
-                p_df = load_csv("portfolio.csv", ["Ticker", "Buy Price", "Qty"])
+                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy Price", "Qty"])
                 new_row = pd.DataFrame([{"Ticker": clean_t, "Buy Price": m_price, "Qty": m_qty}])
                 p_df = pd.concat([p_df, new_row], ignore_index=True)
-                save_csv("portfolio.csv", p_df)
+                save_sheet_data("Portfolio", p_df)
                 st.success(f"Added {clean_t} to Portfolio!")
                 st.rerun()
 
-    p_df = load_csv("portfolio.csv", ["Ticker", "Buy Price", "Qty"])
+    p_df = load_sheet_data("Portfolio", ["Ticker", "Buy Price", "Qty"])
     if not p_df.empty:
         # Header Row
         h_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
@@ -972,7 +974,7 @@ with col_p1:
                     st.rerun()
                 if r_col[5].button("🗑️", key=f"p_del_{ticker}_{idx}"):
                     p_df = p_df.drop(idx)
-                    save_csv("portfolio.csv", p_df)
+                    save_sheet_data("Portfolio", p_df)
                     st.rerun()
     else:
         st.info("Portfolio is empty. Add trades manually or from the calculator.")
@@ -983,15 +985,15 @@ with col_p2:
     if w_input:
         clean_w = w_input.strip().upper()
         if ".NS" not in clean_w and ".BO" not in clean_w: clean_w += ".NS"
-        w_df = load_csv("watchlist.csv", ["Ticker"])
+        w_df = load_sheet_data("Watchlist", ["Ticker"])
         if clean_w not in w_df["Ticker"].values:
             new_row = pd.DataFrame([{"Ticker": clean_w}])
             w_df = pd.concat([w_df, new_row], ignore_index=True)
-            save_csv("watchlist.csv", w_df)
+            save_sheet_data("Watchlist", w_df)
             st.success(f"Added {clean_w} to Watchlist!")
             st.rerun()
 
-    w_df = load_csv("watchlist.csv", ["Ticker"])
+    w_df = load_sheet_data("Watchlist", ["Ticker"])
     if not w_df.empty:
         # Header
         wh_col = st.columns([3, 2, 2, 2])
@@ -1015,7 +1017,7 @@ with col_p2:
                 st.rerun()
             if wr_col[3].button("🗑️", key=f"w_del_{ticker}_{idx}"):
                 w_df = w_df.drop(idx)
-                save_csv("watchlist.csv", w_df)
+                save_sheet_data("Watchlist", w_df)
                 st.rerun()
     else:
         st.info("Watchlist is empty. Search and pin stocks or add manually.")

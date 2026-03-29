@@ -17,6 +17,7 @@ import gspread
 import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
+from datetime import datetime
 from gnews import GNews
 from plotly.subplots import make_subplots
 from streamlit_gsheets import GSheetsConnection
@@ -207,19 +208,25 @@ def set_search_ticker(ticker: str):
 # ===================================================================
 
 def ensure_worksheets_exist(conn):
-    """Verify existence of Watchlist and Portfolio tabs, create if missing."""
+    """Verify existence of Watchlist, Portfolio, and Metadata tabs, create if missing."""
     try:
         # 1. Watchlist
         try:
             conn.read(worksheet="Watchlist", ttl=0)
         except Exception:
-            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker"]))
+            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Signal"]))
         
         # 2. Portfolio
         try:
             conn.read(worksheet="Portfolio", ttl=0)
         except Exception:
-            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Quantity"]))
+            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Quantity", "Signal"]))
+
+        # 3. Metadata (Tracking Scans)
+        try:
+            conn.read(worksheet="Metadata", ttl=0)
+        except Exception:
+            conn.create(worksheet="Metadata", data=pd.DataFrame([{"Key": "last_scan_time", "Value": "None"}]))
             
     except Exception:
         # Flag error but do not stop the app
@@ -281,6 +288,83 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             conn.create(worksheet=worksheet, data=df)
         except Exception:
             st.error(f"⚠️ Failed to save to {worksheet}. Please check Google Sheets permissions.")
+
+
+# ===================================================================
+# AUTOMATED SCHEDULER & BATCH SCAN ENGINE
+# ===================================================================
+
+SCAN_WINDOWS = ["09:30", "11:30", "13:30", "14:30", "15:15"]
+
+def background_batch_scan():
+    """Background scanner to update Sheet technicals and signals."""
+    if st.session_state["sheets_error"] or conn is None:
+        return
+    
+    with st.spinner("🚀 Running Automated Market Scan..."):
+        # 1. Portfolio Scan
+        p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity", "Signal"])
+        if not p_df.empty:
+            for idx, row in p_df.iterrows():
+                try:
+                    ticker = sanitize_ticker(row["Ticker"])
+                    df = fetch_ohlcv(ticker)
+                    if not df.empty:
+                        df = compute_indicators(df)
+                        current_price = df["Close"].iloc[-1]
+                        s1 = df["Support_1"].iloc[-1]
+                        if current_price < s1:
+                            p_df.at[idx, "Signal"] = "🚨 URGENT SELL"
+                        else:
+                            p_df.at[idx, "Signal"] = "✅ HOLD"
+                except: pass
+            save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
+
+        # 2. Watchlist Scan
+        w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
+        if not w_df.empty:
+            for idx, row in w_df.iterrows():
+                try:
+                    ticker = sanitize_ticker(row["Ticker"])
+                    df = fetch_ohlcv(ticker)
+                    if not df.empty:
+                        df = compute_indicators(df)
+                        label, color, _ = get_market_condition(df)
+                        if "SAFE" in label:
+                            w_df.at[idx, "Signal"] = "🔥 BUY NOW"
+                            st.toast(f"🚨 Alert: {ticker} is in the Buy Zone!")
+                        else:
+                            w_df.at[idx, "Signal"] = "Neutral"
+                except: pass
+            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
+
+
+def run_scheduled_scan():
+    """Check if current time matches a Decision Window and trigger scan."""
+    if st.session_state["sheets_error"] or conn is None:
+        return
+
+    now = datetime.now()
+    current_time_str = now.strftime("%H:%M")
+    current_date_str = now.strftime("%Y-%m-%d")
+    
+    # Check if a scan window exists now or earlier today that was not scanned
+    meta_df = load_sheet_data("Metadata", ["Key", "Value"])
+    last_scan_val = "None"
+    if not meta_df.empty and "last_scan_time" in meta_df["Key"].values:
+        last_scan_val = meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"].values[0]
+
+    # Find the latest window that has passsd and see if it was scanned
+    # Simple logic: If current time >= Scan Window and last_scan != current_date_window, then scan
+    for window in reversed(SCAN_WINDOWS):
+        if current_time_str >= window:
+            window_scan_key = f"{current_date_str}_{window}"
+            if last_scan_val != window_scan_key:
+                background_batch_scan()
+                # Update Metadata
+                new_meta = pd.DataFrame([{"Key": "last_scan_time", "Value": window_scan_key}])
+                save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+                break
 
 
 @st.cache_data(ttl=900)
@@ -881,6 +965,9 @@ def render_control_center():
 # INITIALIZE SESSION STATE (Moved to top level file)
 
 st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
+
+# --- 🚀 RUN SCHEDULED SCAN (ON LOAD) ---
+run_scheduled_scan()
 
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:

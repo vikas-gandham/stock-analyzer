@@ -281,7 +281,7 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
                 df[col] = None
         return df[columns]
     except Exception:
-        st.session_state["sheets_error"] = True
+        # Silent fail to prevent crash
         return pd.DataFrame(columns=columns)
 
 
@@ -404,7 +404,8 @@ def run_scheduled_scan():
 
 def render_status_hub():
     """📡 Display high-visibility Scan Status Hub UI."""
-    if st.session_state["sheets_error"] or conn is None:
+    if st.session_state.get("sheets_error") or conn is None:
+        st.markdown("<div style='color: #888; font-size: 0.85rem; padding-bottom: 10px;'>⚠️ System in Offline Mode: Direct Analysis Only</div>", unsafe_allow_html=True)
         return
 
     # Load All Data required for summary
@@ -486,14 +487,20 @@ def render_status_hub():
         
         # Force Scan Button
         if st.button("🔄 Force System Scan", use_container_width=True):
-            background_batch_scan()
-            sync_now = datetime.now().strftime("%I:%M %p")
-            new_meta = pd.DataFrame([
-                {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
-                {"Key": "last_sync_actual", "Value": sync_now}
-            ])
-            save_sheet_data("Metadata", new_meta, ["Key", "Value"])
-            st.rerun()
+            try:
+                with st.spinner("🚀 Stabilizing Connection..."):
+                    time.sleep(1) # Safety delay
+                background_batch_scan()
+                sync_now = datetime.now().strftime("%I:%M %p")
+                new_meta = pd.DataFrame([
+                    {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
+                    {"Key": "last_sync_actual", "Value": sync_now}
+                ])
+                save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+                st.toast("✅ Manual System Scan Successful!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Force Scan Failed: {e}")
 
 
 @st.cache_data(ttl=900)
@@ -1107,7 +1114,8 @@ with col_sym:
         key="search_input",
     )
 
-# --- 📡 SCAN STATUS HUB (NEW) ---
+# --- 📡 SCAN STATUS HUB (REPOSITIONED) ---
+st.container().empty() # Visual separation
 try:
     render_status_hub()
 except Exception as e:

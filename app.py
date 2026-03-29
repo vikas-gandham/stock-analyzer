@@ -12,6 +12,7 @@ from typing import Optional
 import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
+import gspread
 import streamlit as st
 import yfinance as yf
 from gnews import GNews
@@ -122,23 +123,62 @@ st.markdown(
 # DATA CONNECTION (Google Sheets)
 # ===================================================================
 
+def ensure_worksheets_exist(conn):
+    """Verify existence of Watchlist and Portfolio tabs, create if missing."""
+    try:
+        # 1. Watchlist
+        try:
+            conn.read(worksheet="Watchlist", ttl=0)
+        except Exception:
+            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker"]))
+        
+        # 2. Portfolio
+        try:
+            conn.read(worksheet="Portfolio", ttl=0)
+        except Exception:
+            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Quantity"]))
+            
+    except Exception:
+        st.error("⚠️ Google Sheets Connection Error: Please check your Streamlit Secrets and Sheet URL.")
+        st.stop()
+
+
 # Set up connection to Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    ensure_worksheets_exist(conn)
+except Exception:
+    st.error("⚠️ Google Sheets Connection Error: Please check your Streamlit Secrets and Sheet URL.")
+    st.stop()
+
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
-    """Read a worksheet from Google Sheets with ttl=0."""
+    """Read a worksheet from Google Sheets with ttl=0 and self-healing."""
     try:
         df = conn.read(worksheet=worksheet, ttl=0)
         if df is None or df.empty:
             return pd.DataFrame(columns=columns)
-        return df.dropna(how="all")
+        # Ensure all requested columns exist
+        df = df.dropna(how="all")
+        for col in columns:
+            if col not in df.columns:
+                df[col] = None
+        return df[columns]
     except Exception:
         return pd.DataFrame(columns=columns)
 
 
-def save_sheet_data(worksheet: str, df: pd.DataFrame):
-    """Update a worksheet in Google Sheets."""
-    conn.update(worksheet=worksheet, data=df)
+def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
+    """Update a worksheet in Google Sheets, creating it if missing."""
+    if df.empty:
+        df = pd.DataFrame(columns=columns)
+    try:
+        conn.update(worksheet=worksheet, data=df)
+    except Exception:
+        try:
+            conn.create(worksheet=worksheet, data=df)
+        except Exception:
+            st.error(f"⚠️ Failed to save to {worksheet}. Please check Google Sheets permissions.")
 
 
 @st.cache_data(ttl=900)
@@ -812,7 +852,7 @@ if search_query:
                     if full_ticker not in w_df["Ticker"].values:
                         new_row = pd.DataFrame([{"Ticker": full_ticker}])
                         w_df = pd.concat([w_df, new_row], ignore_index=True)
-                        save_sheet_data("Watchlist", w_df)
+                        save_sheet_data("Watchlist", w_df, ["Ticker"])
                         st.success(f"Pinned {full_ticker} to Watchlist!")
                     else:
                         st.info(f"{full_ticker} is already in Watchlist.")
@@ -894,14 +934,14 @@ if search_query:
                         st.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
                         
                         if st.button("💼 Add to Portfolio", type="primary", use_container_width=True):
-                            p_df = load_sheet_data("Portfolio", ["Ticker", "Buy Price", "Qty"])
+                            p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
                             new_trade = pd.DataFrame([{
                                 "Ticker": full_ticker,
-                                "Buy Price": entry_price,
-                                "Qty": shares_to_buy
+                                "Buy_Price": entry_price,
+                                "Quantity": shares_to_buy
                             }])
                             p_df = pd.concat([p_df, new_trade], ignore_index=True)
-                            save_sheet_data("Portfolio", p_df)
+                            save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
                             st.success(f"Added {shares_to_buy} shares of {full_ticker} to Portfolio!")
                             
                         if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
@@ -928,14 +968,14 @@ with col_p1:
             if m_ticker:
                 clean_t = m_ticker.strip().upper()
                 if ".NS" not in clean_t and ".BO" not in clean_t: clean_t += ".NS"
-                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy Price", "Qty"])
-                new_row = pd.DataFrame([{"Ticker": clean_t, "Buy Price": m_price, "Qty": m_qty}])
+                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
+                new_row = pd.DataFrame([{"Ticker": clean_t, "Buy_Price": m_price, "Quantity": m_qty}])
                 p_df = pd.concat([p_df, new_row], ignore_index=True)
-                save_sheet_data("Portfolio", p_df)
+                save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
                 st.success(f"Added {clean_t} to Portfolio!")
                 st.rerun()
 
-    p_df = load_sheet_data("Portfolio", ["Ticker", "Buy Price", "Qty"])
+    p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
     if not p_df.empty:
         # Header Row
         h_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
@@ -948,7 +988,7 @@ with col_p1:
         
         for idx, row in p_df.iterrows():
             ticker = row["Ticker"]
-            buy_price = row["Buy Price"]
+            buy_price = row["Buy_Price"]
             
             p_data = fetch_ohlcv(ticker)
             if not p_data.empty:
@@ -974,7 +1014,7 @@ with col_p1:
                     st.rerun()
                 if r_col[5].button("🗑️", key=f"p_del_{ticker}_{idx}"):
                     p_df = p_df.drop(idx)
-                    save_sheet_data("Portfolio", p_df)
+                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
                     st.rerun()
     else:
         st.info("Portfolio is empty. Add trades manually or from the calculator.")
@@ -989,7 +1029,7 @@ with col_p2:
         if clean_w not in w_df["Ticker"].values:
             new_row = pd.DataFrame([{"Ticker": clean_w}])
             w_df = pd.concat([w_df, new_row], ignore_index=True)
-            save_sheet_data("Watchlist", w_df)
+            save_sheet_data("Watchlist", w_df, ["Ticker"])
             st.success(f"Added {clean_w} to Watchlist!")
             st.rerun()
 
@@ -1017,7 +1057,7 @@ with col_p2:
                 st.rerun()
             if wr_col[3].button("🗑️", key=f"w_del_{ticker}_{idx}"):
                 w_df = w_df.drop(idx)
-                save_sheet_data("Watchlist", w_df)
+                save_sheet_data("Watchlist", w_df, ["Ticker"])
                 st.rerun()
     else:
         st.info("Watchlist is empty. Search and pin stocks or add manually.")

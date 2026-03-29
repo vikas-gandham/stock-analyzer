@@ -362,9 +362,84 @@ def run_scheduled_scan():
             if last_scan_val != window_scan_key:
                 background_batch_scan()
                 # Update Metadata
-                new_meta = pd.DataFrame([{"Key": "last_scan_time", "Value": window_scan_key}])
+                sync_now = datetime.now().strftime("%I:%M %p")
+                new_meta = pd.DataFrame([
+                    {"Key": "last_scan_time", "Value": window_scan_key},
+                    {"Key": "last_sync_actual", "Value": sync_now}
+                ])
                 save_sheet_data("Metadata", new_meta, ["Key", "Value"])
                 break
+
+
+def render_status_hub():
+    """📡 Display high-visibility Scan Status Hub UI."""
+    if st.session_state["sheets_error"] or conn is None:
+        return
+
+    # Load All Data required for summary
+    meta_df = load_sheet_data("Metadata", ["Key", "Value"])
+    p_df = load_sheet_data("Portfolio", ["Signal"])
+    w_df = load_sheet_data("Watchlist", ["Signal"])
+    
+    # Defaults
+    window_label = "Checking..."
+    sync_time = "N/A"
+    
+    # Parse Metadata
+    if not meta_df.empty:
+        l_window = meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"]
+        if not l_window.empty:
+            # Extract time from 'YYYY-MM-DD_HH:MM'
+            w_time = l_window.values[0].split("_")[-1]
+            window_label = f"{w_time} Decision Zone"
+        
+        l_sync = meta_df.loc[meta_df["Key"] == "last_sync_actual", "Value"]
+        if not l_sync.empty:
+            sync_time = l_sync.values[0]
+
+    # Count Signals
+    sell_alerts = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) if not p_df.empty else 0
+    buy_alerts = len(w_df[w_df["Signal"] == "🔥 BUY NOW"]) if not w_df.empty else 0
+    
+    # Render UI
+    st.markdown("""
+        <style>
+        .status-hub {
+            background-color: #1E1E1E;
+            border: 1px solid #333;
+            border-left: 4px solid #00D4AA;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .status-header { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .status-val { font-weight: bold; font-size: 1.1rem; color: #00D4AA; }
+        .signal-indicator { font-size: 1.2rem; }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    with st.container():
+        st.markdown(f'''
+            <div class="status-hub">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div class="status-header">📡 Last Scan Window</div>
+                        <div class="status-val">{window_label}</div>
+                    </div>
+                    <div>
+                        <div class="status-header">⏱️ Sync Time</div>
+                        <div class="status-val">{sync_time}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="status-header">🔥 Live Signals</div>
+                        <div class="status-val">
+                            <span class="signal-indicator">🟢</span> {buy_alerts} Buy Now | 
+                            <span class="signal-indicator">🚨</span> {sell_alerts} Sell Alerts
+                        </div>
+                    </div>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=900)
@@ -977,6 +1052,9 @@ with col_sym:
         placeholder="e.g., Narmada, RELIANCE, TCS",
         key="search_input",
     )
+
+# --- 📡 SCAN STATUS HUB (NEW) ---
+render_status_hub()
 
 
 if search_query:

@@ -148,8 +148,11 @@ def sanitize_ticker(ticker: str) -> str:
     
     # 3. Typo Mapping (Alias)
     TYPO_MAP = {
-        "NANDAN DENIM.NS": "NANDAM.NS",
-        "NANDAN.NS": "NANDAM.NS",
+        "NANDAN DENIM.NS": "NDL.NS",
+        "NANDAN.NS": "NDL.NS",
+        "NANDAM.NS": "NDL.NS",
+        "NANDAM DENIM.NS": "NDL.NS",
+        "SHREE RAMA.NS": "SHREERAMA.NS",
         "TATA MOTORS.NS": "TATAMOTORS.NS",
         "TATA STEEL.NS": "TATASTEEL.NS"
     }
@@ -240,17 +243,21 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
 @st.cache_data(ttl=900)
 def fetch_ohlcv(ticker: str) -> pd.DataFrame:
     try:
-        df = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
+        # Standardize for yfinance MultiIndex (requires yfinance >= 0.2.40)
+        df = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True, multi_level_index=False)
         if df.empty: return pd.DataFrame()
         
-        # Force flatten columns and drop 'Ticker' level if yfinance added it
+        # Force flatten columns and handle edge cases
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
+        # Clean column names
+        df.columns = [str(c).strip().title() for c in df.columns]
+        
         # Nuke duplicates and sort
-        df = df.loc[~df.index.duplicated(keep='first')]
+        df = df.loc[~df.index.duplicated(keep='last')]
         return df.sort_index()
-    except:
+    except Exception:
         return pd.DataFrame()
 
 
@@ -1069,6 +1076,17 @@ with col_p1:
             
             try:
                 p_data = fetch_ohlcv(clean_ticker)
+                
+                # Force Sync / Smart Search Fallback
+                if p_data.empty:
+                    try:
+                        search_res = yf.Search(clean_ticker, max_results=1).quotes
+                        if search_res:
+                            new_sym = search_res[0]['symbol']
+                            p_data = fetch_ohlcv(new_sym)
+                            clean_ticker = new_sym
+                    except Exception: pass
+
                 if not p_data.empty:
                     p_data = compute_indicators(p_data)
                     funda = fetch_fundamentals(clean_ticker)
@@ -1146,6 +1164,17 @@ with col_p2:
             clean_ticker = sanitize_ticker(ticker)
             try:
                 w_data = fetch_ohlcv(clean_ticker)
+                
+                # Force Sync / Smart Search Fallback
+                if w_data.empty:
+                    try:
+                        search_res = yf.Search(clean_ticker, max_results=1).quotes
+                        if search_res:
+                            new_sym = search_res[0]['symbol']
+                            w_data = fetch_ohlcv(new_sym)
+                            clean_ticker = new_sym
+                    except Exception: pass
+
                 if not w_data.empty:
                     w_data = compute_indicators(w_data)
                     f_w = fetch_fundamentals(clean_ticker)

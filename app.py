@@ -174,8 +174,8 @@ def set_search_ticker(ticker: str):
     """Callback triggered by any 'Analyze' button to sync the search bar."""
     st.session_state["search_input"] = str(ticker)
     st.session_state["last_search_query"] = None # Force detection on all platforms (mobile inclusive)
-    # Auto-scroll to top
-    components.html('<script>window.parent.document.querySelector(".main").scrollTo(0,0);</script>', height=0)
+    # Auto-scroll to top (Smooth Section Scroll)
+    st.components.v1.html('<script>window.parent.document.querySelector("section.main").scrollTo({top: 0, behavior: "smooth"});</script>', height=0)
 
 
 # ===================================================================
@@ -628,6 +628,34 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     return total_score, t_points, v_points, s_points, f_points
 
 
+def get_market_condition(df):
+    """MASTER Logic: Unified RSI (Momentum) + Entry Risk (Structure) scoring."""
+    if df.empty or len(df) < 14:
+        return "⚪ N/A", "gray", 50
+    
+    # 1. RSI(14) - Momentum
+    rsi_vals = ta.rsi(df['Close'], length=14)
+    rsi = rsi_vals.iloc[-1] if not pd.isna(rsi_vals.iloc[-1]) else 50
+    
+    # 2. Risk - Structure
+    close = df['Close'].iloc[-1]
+    s1 = df['Support_1'].iloc[-1]
+    r1 = df['Resistance_1'].iloc[-1]
+    
+    # Calc Risk Percentage
+    if r1 > s1:
+        risk_pct = ((close - s1) / (r1 - s1)) * 100
+    else:
+        risk_pct = 50
+    
+    # Logic Hierarchy
+    if rsi < 30: return "🔵 OVERSOLD", "blue", risk_pct
+    if rsi > 70: return "🟣 OVERBOUGHT", "purple", risk_pct
+    if risk_pct < 35: return "🟢 SAFE", "#00D4AA", risk_pct
+    if risk_pct > 75: return "🔴 OVEREXTENDED", "#FF4B4B", risk_pct
+    return "🟡 FAIR", "#FFD700", risk_pct
+
+
 def render_control_center():
     # --- Row 1: Batch Processor (Side-by-Side Split) ---
     st.markdown("<div style='padding-top: 2rem;'>", unsafe_allow_html=True)
@@ -980,12 +1008,25 @@ if search_query:
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
             with c_gauge:
-                # Color code safety number
-                gauge_num_color = "#00D4AA" if s_score <= 30 else "#FFD700" if s_score <= 60 else "#FF4B4B"
-                g_fig = go.Figure(go.Indicator(mode="gauge+number", value=s_score, number={'font': {'color': gauge_num_color}}, title={'text': "Entry Safety Gauge", 'font': {'size': 20, 'color': "white"}}, gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#00D4AA"}, 'steps': [{'range': [0, 30], 'color': 'rgba(0, 212, 170, 0.3)'}, {'range': [30, 60], 'color': 'rgba(255, 215, 0, 0.3)'}, {'range': [60, 100], 'color': 'rgba(255, 75, 75, 0.3)'}]}))
+                cond_label, cond_color, cond_val = get_market_condition(df)
+                g_fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=cond_val,
+                    number={'font': {'color': cond_color}},
+                    title={'text': f"Entry Context: {cond_label}", 'font': {'size': 20, 'color': "white"}},
+                    gauge={
+                        'axis': {'range': [None, 100]},
+                        'bar': {'color': cond_color},
+                        'steps': [
+                            {'range': [0, 35], 'color': 'rgba(0, 212, 170, 0.3)'},
+                            {'range': [35, 75], 'color': 'rgba(255, 215, 0, 0.3)'},
+                            {'range': [75, 100], 'color': 'rgba(255, 75, 75, 0.3)'}
+                        ]
+                    }
+                ))
                 g_fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
                 st.plotly_chart(g_fig, use_container_width=True)
-                st.markdown("<p style='text-align: center; color: gray;'><span style='color: #00D4AA;'>Safe</span> | <span style='color: #FFD700;'>Fair</span> | <span style='color: #FF4B4B;'>Overextended</span></p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='text-align: center; color: gray;'><span style='color: blue;'>Oversold</span> | <span style='color: #00D4AA;'>Safe</span> | <span style='color: #FFD700;'>Fair</span> | <span style='color: #FF4B4B;'>Overextended</span> | <span style='color: purple;'>Overbought</span></p>", unsafe_allow_html=True)
             with c_mom:
                 # Color code ADX number
                 adx_num_color = "#808080" if adx_v <= 25 else "#00D4AA" if adx_v <= 50 else "#006400"
@@ -1248,16 +1289,14 @@ with col_p2:
                         price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
                         s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
                         
-                        # Safety Status
-                        if s_pts_w == 2: safety_txt, safety_clr = "Safe", "#00D4AA"
-                        elif s_pts_w == 1: safety_txt, safety_clr = "Fair", "#FFD700"
-                        else: safety_txt, safety_clr = "Overextended", "#FF4B4B"
+                        # Unified Marker Logic
+                        w_label, w_color, _ = get_market_condition(w_data)
                         
                         wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
                         wr_col[0].write(clean_ticker)
                         wr_col[1].write(price_str)
                         wr_col[2].write(f"{scr_w}/8")
-                        wr_col[3].markdown(f"<span style='color:{safety_clr};'>{safety_txt}</span>", unsafe_allow_html=True)
+                        wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
                         wr_col[4].write(s1_val)
                         if wr_col[5].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                             pass

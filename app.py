@@ -428,12 +428,12 @@ def render_status_hub():
                     </div>
                     <div>
                         <div class="status-header">⏱️ Sync Time</div>
-                        <div class="status-val">{sync_time}</div>
+                        <div class="status-val">Triggered at {sync_time}</div>
                     </div>
                     <div style="text-align: right;">
                         <div class="status-header">🔥 Live Signals</div>
                         <div class="status-val">
-                            <span class="signal-indicator">🟢</span> {buy_alerts} Buy Now | 
+                            <span class="signal-indicator">🟢</span> {buy_alerts} Buy Alert | 
                             <span class="signal-indicator">🚨</span> {sell_alerts} Sell Alerts
                         </div>
                     </div>

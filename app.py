@@ -248,17 +248,18 @@ except Exception:
     st.session_state["sheets_error"] = True
 
 # 3. Main Connection Initialization (Bypass hard-stop)
-if not st.session_state["sheets_error"]:
+if not st.session_state.get("sheets_error"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         ensure_worksheets_exist(conn)
     except Exception:
         st.session_state["sheets_error"] = True
+        conn = None
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
     """Read a worksheet with non-blocking error handling."""
-    if st.session_state["sheets_error"] or conn is None:
+    if st.session_state.get("sheets_error") or conn is None:
         return pd.DataFrame(columns=columns)
     try:
         df = conn.read(worksheet=worksheet, ttl=0)
@@ -271,6 +272,7 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
                 df[col] = None
         return df[columns]
     except Exception:
+        st.session_state["sheets_error"] = True
         return pd.DataFrame(columns=columns)
 
 
@@ -1364,6 +1366,7 @@ with col_p1:
         
         for idx, row in p_df.iterrows():
             ticker = row["Ticker"]
+            if not ticker or pd.isna(ticker): continue
             clean_ticker = sanitize_ticker(ticker)
             buy_price = row["Buy_Price"]
             
@@ -1422,9 +1425,9 @@ with col_p1:
         st.info("Portfolio is empty. Add trades manually or from the calculator.")
 
 with col_p2:
+    w_input = "" # Defined here to prevent NameError
     st.subheader("⭐ Watchlist")
-    w_input = ""
-    if st.session_state["sheets_error"]:
+    if st.session_state.get("sheets_error"):
         st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
     else:
         w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
@@ -1459,6 +1462,7 @@ with col_p2:
             for idx, row in w_df.iterrows():
                 time.sleep(0.05) # Minor throttle for yfinance
                 ticker = row["Ticker"]
+                if not ticker or pd.isna(ticker): continue
                 clean_ticker = sanitize_ticker(ticker)
                 try:
                     w_data = fetch_ohlcv(clean_ticker)

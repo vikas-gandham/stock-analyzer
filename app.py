@@ -835,11 +835,13 @@ if search_query:
             h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color="normal" if v_ratio_raw >= 1.5 else "off")
 
             # --- Master Rating ---
-            score, t_points, v_points, s_points, f_points = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+            total_score, t_points, v_points, s_points, f_points = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+            s_score = (s_points / 2) * 100
+            adx_v = float(df["ADX"].iloc[-1])
 
-            if score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
-            elif score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
-            elif score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
+            if total_score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
+            elif total_score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
+            elif total_score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
             else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
 
             rating_html = f'''
@@ -994,10 +996,7 @@ with col_p1:
                     st.success(f"Added {clean_t} to Portfolio!")
                 
                 save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
-                # Reset Inputs
-                st.session_state["m_ticker_input"] = ""
-                st.session_state["m_price_input"] = 0.0
-                st.session_state["m_qty_input"] = 1
+                # Reset via rerun
                 st.rerun()
 
     p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
@@ -1015,32 +1014,37 @@ with col_p1:
             ticker = row["Ticker"]
             buy_price = row["Buy_Price"]
             
-            p_data = fetch_ohlcv(ticker)
-            if not p_data.empty:
-                p_data = compute_indicators(p_data)
-                funda = fetch_fundamentals(ticker)
-                score, _, _, _, _ = calculate_master_score(p_data, funda)
-                cmp = p_data["Close"].iloc[-1]
-                s1 = p_data["Support_1"].iloc[-1]
-                pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
-                
-                # Exit Logic
-                if cmp < s1: status, color = "🚨 SELL (Below Support)", "#FF4B4B"
-                elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
-                else: status, color = "✅ HOLD", "#00D4AA"
-                
-                r_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
-                r_col[0].write(ticker)
-                r_col[1].write(f"{pnl:+.2f}%")
-                r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
-                r_col[3].write(f"Rating: {score}/8")
-                if r_col[4].button("Analyze", key=f"p_an_{ticker}_{idx}"):
-                    st.session_state["search_input"] = ticker
-                    st.rerun()
-                if r_col[5].button("🗑️", key=f"p_del_{ticker}_{idx}"):
-                    p_df = p_df.drop(idx)
-                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
-                    st.rerun()
+            try:
+                p_data = fetch_ohlcv(ticker)
+                if not p_data.empty:
+                    p_data = compute_indicators(p_data)
+                    funda = fetch_fundamentals(ticker)
+                    score, _, _, _, _ = calculate_master_score(p_data, funda)
+                    cmp = p_data["Close"].iloc[-1]
+                    s1 = p_data["Support_1"].iloc[-1]
+                    pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
+                    
+                    # Exit Logic
+                    if cmp < s1: status, color = "🚨 SELL (Below Support)", "#FF4B4B"
+                    elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
+                    else: status, color = "✅ HOLD", "#00D4AA"
+                    
+                    r_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
+                    r_col[0].write(ticker)
+                    r_col[1].write(f"{pnl:+.2f}%")
+                    r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
+                    r_col[3].write(f"Rating: {score}/8")
+                    if r_col[4].button("Analyze", key=f"p_an_{ticker}_{idx}"):
+                        st.session_state["search_input"] = str(ticker)
+                        st.rerun()
+                    if r_col[5].button("🗑️", key=f"p_del_{ticker}_{idx}"):
+                        p_df = p_df.drop(idx)
+                        save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                        st.rerun()
+                else:
+                    st.error(f"Could not fetch data for {ticker}")
+            except Exception:
+                st.error(f"Error processing {ticker} (Portfolio)")
     else:
         st.info("Portfolio is empty. Add trades manually or from the calculator.")
 
@@ -1059,8 +1063,7 @@ with col_p2:
         else:
             st.info(f"{clean_w} is already in Watchlist.")
         
-        # Reset Input
-        st.session_state["w_ticker_input"] = ""
+        # Reset via rerun
         st.rerun()
 
     if not w_df.empty:
@@ -1076,33 +1079,38 @@ with col_p2:
         
         for idx, row in w_df.iterrows():
             ticker = row["Ticker"]
-            w_data = fetch_ohlcv(ticker)
-            if not w_data.empty:
-                w_data = compute_indicators(w_data)
-                f_w = fetch_fundamentals(ticker)
-                scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
-                
-                price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
-                s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
-                
-                # Safety Status
-                if s_pts_w == 2: safety_txt, safety_clr = "Safe", "#00D4AA"
-                elif s_pts_w == 1: safety_txt, safety_clr = "Fair", "#FFD700"
-                else: safety_txt, safety_clr = "Overextended", "#FF4B4B"
-                
-                wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
-                wr_col[0].write(ticker)
-                wr_col[1].write(price_str)
-                wr_col[2].write(f"{scr_w}/8")
-                wr_col[3].markdown(f"<span style='color:{safety_clr};'>{safety_txt}</span>", unsafe_allow_html=True)
-                wr_col[4].write(s1_val)
-                if wr_col[5].button("Analyze", key=f"w_an_{ticker}_{idx}"):
-                    st.session_state["search_input"] = ticker
-                    st.rerun()
-                if wr_col[6].button("🗑️", key=f"w_del_{ticker}_{idx}"):
-                    w_df = w_df.drop(idx)
-                    save_sheet_data("Watchlist", w_df, ["Ticker"])
-                    st.rerun()
+            try:
+                w_data = fetch_ohlcv(ticker)
+                if not w_data.empty:
+                    w_data = compute_indicators(w_data)
+                    f_w = fetch_fundamentals(ticker)
+                    scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
+                    
+                    price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
+                    s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
+                    
+                    # Safety Status
+                    if s_pts_w == 2: safety_txt, safety_clr = "Safe", "#00D4AA"
+                    elif s_pts_w == 1: safety_txt, safety_clr = "Fair", "#FFD700"
+                    else: safety_txt, safety_clr = "Overextended", "#FF4B4B"
+                    
+                    wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
+                    wr_col[0].write(ticker)
+                    wr_col[1].write(price_str)
+                    wr_col[2].write(f"{scr_w}/8")
+                    wr_col[3].markdown(f"<span style='color:{safety_clr};'>{safety_txt}</span>", unsafe_allow_html=True)
+                    wr_col[4].write(s1_val)
+                    if wr_col[5].button("Analyze", key=f"w_an_{ticker}_{idx}"):
+                        st.session_state["search_input"] = str(ticker)
+                        st.rerun()
+                    if wr_col[6].button("🗑️", key=f"w_del_{ticker}_{idx}"):
+                        w_df = w_df.drop(idx)
+                        save_sheet_data("Watchlist", w_df, ["Ticker"])
+                        st.rerun()
+                else:
+                    st.error(f"No data for {ticker}")
+            except Exception:
+                st.error(f"Error processing {ticker} (Watchlist)")
     else:
         st.info("Watchlist is empty. Search and pin stocks or add manually.")
 
@@ -1137,7 +1145,7 @@ if "batch_results" in st.session_state and st.session_state["batch_results"] is 
             rb_col[4].write(row["Safety Score"])
             rb_col[5].write(row["Master Rating"])
             if rb_col[6].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}"):
-                st.session_state["search_input"] = row["Ticker"]
+                st.session_state["search_input"] = str(row["Ticker"])
                 st.rerun()
     
     # Still keep the data editor for selecting rows (Batch Export)

@@ -243,16 +243,17 @@ def ensure_worksheets_exist(conn):
 
 
 # ── Persistent connection factory (survives reruns via cache_resource) ──────
-@st.cache_resource
+@st.cache_resource(ttl=3600)
 def get_persistent_conn():
-    """Create the GSheets connection exactly once per app lifetime."""
+    """Create the GSheets connection exactly once per hour.
+
+    TTL=3600 ensures Streamlit automatically rebuilds stale OAuth tokens
+    without needing a manual cache-clear.
+    """
     return st.connection("gsheets", type=GSheetsConnection)
 
 
-# Global Connection Handle — resolved once at startup, reused on every rerun
-conn = None
-
-# 1. Robust Secrets Check
+# 1. Robust Secrets Check (no global conn variable — cache manages the object)
 if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
     st.session_state["sheets_error"] = True
     st.session_state["sheets_error_msg"] = "Missing [connections.gsheets] section in secrets.toml."
@@ -265,35 +266,41 @@ else:
         st.session_state["sheets_error"] = True
         st.session_state["sheets_error_msg"] = f"Private key read error: {_key_err}"
 
-    # 3. Main Connection Initialization — cached, so the handshake only happens once
+    # 3. Warm-up — call once at startup so the first rerun is instant
     if not st.session_state.get("sheets_error"):
         try:
-            conn = get_persistent_conn()
-            ensure_worksheets_exist(conn)
+            _startup_conn = get_persistent_conn()
+            ensure_worksheets_exist(_startup_conn)
         except Exception as _conn_err:
             st.session_state["sheets_error"] = True
             st.session_state["sheets_error_msg"] = str(_conn_err)
-            conn = None
 
 
 def get_conn():
-    """Return the active connection, attempting a reconnect if the handle is None."""
-    global conn
-    if conn is not None:
-        return conn
-    if st.session_state.get("sheets_error"):
-        return None
+    """Self-healing connection accessor.
+
+    Always tries to get a live connection from the cache.  If it
+    succeeds it clears any stale error flags so the UI recovers
+    automatically.  If it fails it sets the error flags for the UI
+    to display the Retry button.
+    """
     try:
-        conn = get_persistent_conn()
-        return conn
-    except Exception:
+        c = get_persistent_conn()
+        # Successful — heal any previous error state
+        st.session_state["sheets_error"] = False
+        st.session_state.pop("sheets_error_msg", None)
+        return c
+    except Exception as e:
+        st.session_state["sheets_error"] = True
+        st.session_state["sheets_error_msg"] = str(e)
         return None
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
     """Read a worksheet with non-blocking error handling."""
     active_conn = get_conn()
-    if st.session_state.get("sheets_error") or active_conn is None:
+    # Early-exit guard: never call .read() on a None connection
+    if active_conn is None:
         return pd.DataFrame(columns=columns)
     try:
         df = active_conn.read(worksheet=worksheet, ttl=0)
@@ -1184,9 +1191,6 @@ def render_control_center():
 
 st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
 
-# --- 🚀 RUN SCHEDULED SCAN (ON LOAD) ---
-run_scheduled_scan()
-
 col_sym, col_tick = st.columns([7, 3])
 with col_sym:
     # Warp Search Bar Sync - Streamlit binds this widget to st.session_state['search_input']
@@ -1705,6 +1709,15 @@ if "batch_results" in st.session_state and st.session_state["batch_results"] is 
 # ===================================================================
 # Footer
 # ===================================================================
+
+# --- 🚀 SCHEDULED SCAN (deferred so entire UI renders first) ---
+# Placed here so the Search Bar, Status Hub, Portfolio and Watchlist
+# are all painted before any heavy background fetching begins.
+try:
+    run_scheduled_scan()
+except Exception as _scan_err:
+    pass  # Non-blocking: scan failure must never kill the page
+
 st.divider()
 st.subheader("🤖 AI Settings")
 

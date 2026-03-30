@@ -248,21 +248,26 @@ conn = None
 # 1. Robust Secrets Check
 if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
     st.session_state["sheets_error"] = True
+    st.session_state["sheets_error_msg"] = "Missing [connections.gsheets] section in secrets.toml."
 
-# 2. Key Sanitization (As Requested)
+# 2. Key Sanitization — applied immediately on read to avoid \\n artifacts
 try:
-    if not st.session_state["sheets_error"]:
-        private_key = st.secrets["connections"]["gsheets"]["private_key"].replace('\\n', '\n').strip()
-except Exception:
+    if not st.session_state.get("sheets_error"):
+        raw_key = st.secrets["connections"]["gsheets"]["private_key"]
+        # Immediately sanitize escape sequences written as literal \n
+        sanitized_key = raw_key.replace('\\n', '\n').strip()
+except Exception as _key_err:
     st.session_state["sheets_error"] = True
+    st.session_state["sheets_error_msg"] = f"Private key read error: {_key_err}"
 
-# 3. Main Connection Initialization (Bypass hard-stop)
+# 3. Main Connection Initialization — verbose error so the exact failure is visible
 if not st.session_state.get("sheets_error"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         ensure_worksheets_exist(conn)
-    except Exception:
+    except Exception as _conn_err:
         st.session_state["sheets_error"] = True
+        st.session_state["sheets_error_msg"] = str(_conn_err)
         conn = None
 
 
@@ -405,34 +410,49 @@ def run_scheduled_scan():
 def render_status_hub():
     """📡 Display high-visibility Scan Status Hub UI."""
     if st.session_state.get("sheets_error") or conn is None:
-        st.markdown("<div style='color: #888; font-size: 0.85rem; padding-bottom: 10px;'>⚠️ System in Offline Mode: Direct Analysis Only</div>", unsafe_allow_html=True)
+        # Show verbose offline reason so user can diagnose the connection failure
+        err_msg = st.session_state.get("sheets_error_msg", "Unknown connection error")
+        st.markdown(
+            "<div style='color: #888; font-size: 0.85rem; padding-bottom: 4px;'>"
+            "⚠️ <strong>System in Offline Mode</strong> — Direct Analysis Only"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.error(f"Google Sheets Connection Error: {err_msg}")
         return
 
     # Load All Data required for summary
     meta_df = load_sheet_data("Metadata", ["Key", "Value"])
     p_df = load_sheet_data("Portfolio", ["Signal"])
     w_df = load_sheet_data("Watchlist", ["Signal"])
-    
+
     # Defaults
     now = datetime.now()
     is_weekend = now.weekday() in [5, 6]
-    window_label = "📡 Initializing System..." if not meta_df.empty and meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"].values[0] == "None" else "No Scans Today"
+    window_label = (
+        "📡 Initializing System..."
+        if not meta_df.empty
+        and meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"].values[0] == "None"
+        else "No Scans Today"
+    )
     sync_time = "N/A"
     weekend_tag = ""
-    
+
     # Weekend Auto-Fill Logic
     if is_weekend:
         window_label = "15:15 Final Scan (Friday Close)"
-        weekend_tag = "<div style='font-size: 0.75rem; color: #FFD700; margin-top: 2px;'>🗓️ Weekend Mode: Showing Friday Close</div>"
+        weekend_tag = (
+            "<div style='font-size: 0.75rem; color: #FFD700; margin-top: 2px;'>"
+            "🗓️ Weekend Mode: Showing Friday Close</div>"
+        )
 
     # Parse Metadata
     if not meta_df.empty:
         l_window = meta_df.loc[meta_df["Key"] == "last_scan_time", "Value"]
         if not l_window.empty and pd.notna(l_window.iloc[0]) and "_" in str(l_window.iloc[0]):
-            # Extract time from 'YYYY-MM-DD_HH:MM'
             w_time = str(l_window.iloc[0]).split("_")[-1]
             window_label = f"{w_time} Decision Zone"
-        
+
         l_sync = meta_df.loc[meta_df["Key"] == "last_sync_actual", "Value"]
         if not l_sync.empty and pd.notna(l_sync.iloc[0]):
             sync_time = str(l_sync.iloc[0])
@@ -440,9 +460,10 @@ def render_status_hub():
     # Count Signals
     sell_alerts = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) if not p_df.empty else 0
     buy_alerts = len(w_df[w_df["Signal"] == "🔥 BUY NOW"]) if not w_df.empty else 0
-    
-    # Render UI
-    st.markdown("""
+
+    # ── CSS (injected once) ──────────────────────────────────────────
+    st.markdown(
+        """
         <style>
         .status-hub {
             background-color: #1E1E1E;
@@ -450,57 +471,65 @@ def render_status_hub():
             border-left: 4px solid #00D4AA;
             padding: 1rem;
             border-radius: 0.5rem;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
         }
         .status-header { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
-        .status-val { font-weight: bold; font-size: 1.1rem; color: #00D4AA; }
+        .status-val    { font-weight: bold; font-size: 1.1rem; color: #00D4AA; }
         .signal-indicator { font-size: 1.2rem; }
         </style>
-    """, unsafe_allow_html=True)
-    
-    with st.container():
-        st.markdown(f'''
-            <div class="status-hub">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <div class="status-header">📡 Last Scan Window</div>
-                        <div class="status-val">{window_label}</div>
-                        {weekend_tag}
-                    </div>
-                    <div>
-                        <div class="status-header">⏱️ Sync Time</div>
-                        <div class="status-val">Triggered at {sync_time}</div>
-                    </div>
-                    <div style="text-align: right;">
-                        <div class="status-header">🔥 Live Signals</div>
-                        <div class="status-val">
-                            <span class="signal-indicator">🟢</span> {buy_alerts} Buy Alert | 
-                            <span class="signal-indicator">🚨</span> {sell_alerts} Sell Alerts
-                        </div>
-                    </div>
-                </div>
-                <div style="padding-top: 10px; border-top: 1px solid #333; margin-top: 10px;">
-                    <div id="force_scan_btn"></div>
-                </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── Hub Panel ────────────────────────────────────────────────────
+    # Build the two variable sub-blocks first so the f-string stays clean
+    sync_block = (
+        f"<div class='status-header'>⏱️ Sync Time</div>"
+        f"<div class='status-val'>Triggered at {sync_time}</div>"
+    )
+    signals_block = (
+        f"<div class='status-header'>🔥 Live Signals</div>"
+        f"<div class='status-val'>"
+        f"<span class='signal-indicator'>🟢</span> {buy_alerts} Buy Alert&nbsp;|&nbsp;"
+        f"<span class='signal-indicator'>🚨</span> {sell_alerts} Sell Alerts"
+        f"</div>"
+    )
+
+    hub_html = f"""
+    <div class="status-hub">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <div class="status-header">📡 Last Scan Window</div>
+                <div class="status-val">{window_label}</div>
+                {weekend_tag}
             </div>
-        ''', unsafe_allow_html=True)
-        
-        # Force Scan Button
-        if st.button("🔄 Force System Scan", use_container_width=True):
-            try:
-                with st.spinner("🚀 Stabilizing Connection..."):
-                    time.sleep(1) # Safety delay
-                background_batch_scan()
-                sync_now = datetime.now().strftime("%I:%M %p")
-                new_meta = pd.DataFrame([
-                    {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
-                    {"Key": "last_sync_actual", "Value": sync_now}
-                ])
-                save_sheet_data("Metadata", new_meta, ["Key", "Value"])
-                st.toast("✅ Manual System Scan Successful!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Force Scan Failed: {e}")
+            <div>{sync_block}</div>
+            <div style="text-align:right;">{signals_block}</div>
+        </div>
+    </div>
+    """
+    st.markdown(hub_html, unsafe_allow_html=True)
+
+    # ── Force Scan Button (unique key prevents duplicate-widget error) ──
+    if st.button(
+        "🔄 Force System Scan",
+        key="force_scan_hub_btn",
+        use_container_width=True,
+    ):
+        try:
+            with st.spinner("🚀 Stabilizing Connection..."):
+                time.sleep(1)          # Safety delay — lets prior writes settle
+            background_batch_scan()
+            sync_now = datetime.now().strftime("%I:%M %p")
+            new_meta = pd.DataFrame([
+                {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
+                {"Key": "last_sync_actual", "Value": sync_now},
+            ])
+            save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+            st.toast("✅ Manual System Scan Successful!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Force Scan Failed: {e}")
 
 
 @st.cache_data(ttl=900)
@@ -1114,8 +1143,7 @@ with col_sym:
         key="search_input",
     )
 
-# --- 📡 SCAN STATUS HUB (REPOSITIONED) ---
-st.container().empty() # Visual separation
+# --- 📡 SCAN STATUS HUB — Control Center (above Portfolio/Watchlist, below Search Bar) ---
 try:
     render_status_hub()
 except Exception as e:

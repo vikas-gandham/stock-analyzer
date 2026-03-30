@@ -1509,15 +1509,17 @@ else:
 
 p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
 if not p_df.empty:
-    # Header Row — wider ratios for full-screen display
-    h_col = st.columns([2.5, 1, 1.2, 1.5, 1.5, 1.5, 0.5])
+    # 9-column header ─ Ticker | P&L | Status | Master | T1 Scale-Out | Trail Stop | Signal | Action | Del
+    h_col = st.columns([2.5, 1, 1.2, 1, 1.5, 1.5, 1.2, 1.2, 0.5])
     h_col[0].markdown("**Ticker**")
     h_col[1].markdown("**P&L %**")
     h_col[2].markdown("**Status**")
     h_col[3].markdown("**Master**")
-    h_col[4].markdown("**Signal**")
-    h_col[5].markdown("**Action**")
-    h_col[6].markdown("**Del**")
+    h_col[4].markdown("**🎯 T1 (Book 50%)**")
+    h_col[5].markdown("**🛡️ Trail Stop**")
+    h_col[6].markdown("**Signal**")
+    h_col[7].markdown("**Action**")
+    h_col[8].markdown("**Del**")
 
     for idx, row in p_df.iterrows():
         ticker = row["Ticker"]
@@ -1546,31 +1548,50 @@ if not p_df.empty:
                 s1 = p_data["Support_1"].iloc[-1]
                 pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
 
-                # Exit Logic
-                if cmp < s1: status, color = "🚨 SELL (Below Support)", "#FF4B4B"
-                elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
-                else: status, color = "✅ HOLD", "#00D4AA"
+                # ── Exit Status (Trailing Stop = dynamic S1) ──────────────────
+                if cmp < s1:
+                    status, color = "🚨 SELL — Below Trail Stop", "#FF4B4B"
+                elif score < 4:
+                    status, color = "⚠️ WEAK (Watch)", "#FFD700"
+                else:
+                    status, color = "✅ HOLD — Trend Active", "#00D4AA"
 
-                r_col = st.columns([2.5, 1, 1.2, 1.5, 1.5, 1.5, 0.5])
+                # ── T1: 1:3 R:R Scale-Out Target ───────────────────────────
+                # Risk = entry − initial stop (S1 at time of buy = current S1 proxy).
+                # We use current S1 as the trailing stop, so T1 is still a useful
+                # forward reference even as the stock moves.
+                p_risk = buy_price - s1
+                if p_risk > 0:
+                    p_t1 = buy_price + (p_risk * 3)
+                    t1_str = f"₹{p_t1:,.2f}"
+                    # Colour T1 green if already hit, grey otherwise
+                    t1_color = "#00D4AA" if cmp >= p_t1 else "#AAAAAA"
+                else:
+                    t1_str, t1_color = "N/A", "#AAAAAA"
+
+                # ── Trailing Stop = live dynamic S1 ────────────────────────
+                trail_str = f"₹{s1:,.2f}"
+
+                r_col = st.columns([2.5, 1, 1.2, 1, 1.5, 1.5, 1.2, 1.2, 0.5])
                 r_col[0].write(clean_ticker)
                 r_col[1].write(f"{pnl:+.2f}%")
                 r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
-                r_col[3].write(f"Rating: {score}/8")
-                r_col[4].write(str(row.get("Signal", "✅ HOLD")))
-                if r_col[5].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                r_col[3].write(f"{score}/8")
+                r_col[4].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>{t1_str}</span>", unsafe_allow_html=True)
+                r_col[5].write(trail_str)
+                r_col[6].write(str(row.get("Signal", "✅ HOLD")))
+                if r_col[7].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                     pass
-                if r_col[6].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
+                if r_col[8].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
                     save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
                     st.rerun()
             else:
-                r_col = st.columns([2.5, 1, 1.5, 1.5, 1.5, 1])
+                r_col = st.columns([2.5, 1, 1.5, 1, 1.5, 1.5, 1.2, 1.2, 0.5])
                 r_col[0].write(f"⚠️ {clean_ticker}")
-                r_col[1].write("N/A")
-                r_col[2].write("Invalid Ticker")
-                r_col[3].write("N/A")
-                r_col[4].write("")
-                if r_col[5].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
+                for i in range(1, 7): r_col[i].write("N/A")
+                r_col[7].write("")
+                if r_col[8].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
                     save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
                     st.rerun()
@@ -1604,18 +1625,19 @@ if w_input:
     st.rerun()
 
 if not w_df.empty:
-    # Header — wider ratios for full-screen display
-    wh_col = st.columns([2.5, 1, 1, 1.5, 1.5, 1.2, 1, 0.5])
+    # 9-column header ─ Ticker | Price | Rating | Condition | Signal | S1 Stop | T1 Target | Analyze | Del
+    wh_col = st.columns([2.5, 1, 0.8, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
     wh_col[0].markdown("**Ticker**")
     wh_col[1].markdown("**Price**")
     wh_col[2].markdown("**Rating**")
     wh_col[3].markdown("**Condition**")
     wh_col[4].markdown("**Signal**")
-    wh_col[5].markdown("**Support**")
-    wh_col[6].markdown("**Analyze**")
-    wh_col[7].markdown("**🗑️**")
+    wh_col[5].markdown("**🛡️ S1 (Runner)**")
+    wh_col[6].markdown("**🎯 T1 (Book 50%)**")
+    wh_col[7].markdown("**Analyze**")
+    wh_col[8].markdown("**🗑️**")
 
-    # Wrapped Container with Throttle to prevent 'SHREERAMA.NS' errors
+    # Wrapped Container with Throttle to prevent errors
     with st.container():
         for idx, row in w_df.iterrows():
             time.sleep(0.05) # Minor throttle for yfinance
@@ -1640,34 +1662,44 @@ if not w_df.empty:
                     f_w = fetch_fundamentals(clean_ticker)
                     scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
 
-                    price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
-                    s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
+                    w_cmp = w_data['Close'].iloc[-1]
+                    w_s1 = w_data['Support_1'].iloc[-1]
+
+                    price_str = f"₹{w_cmp:,.2f}"
+                    s1_str = f"₹{w_s1:,.2f}"
 
                     # Unified Marker Logic
                     w_label, w_color, _ = get_market_condition(w_data)
 
-                    wr_col = st.columns([2.5, 1, 1, 1.5, 1.5, 1.2, 1, 0.5])
+                    # ── T1: 1:3 R:R prospective entry target ─────────────────────
+                    # "If I buy NOW at CMP, with S1 as my stop, where is 1:3?"
+                    w_risk = w_cmp - w_s1
+                    if w_risk > 0:
+                        w_t1 = w_cmp + (w_risk * 3)
+                        w_t1_str = f"🎯 ₹{w_t1:,.2f}"
+                        w_t1_color = "#00D4AA"
+                    else:
+                        w_t1_str, w_t1_color = "N/A", "#AAAAAA"
+
+                    wr_col = st.columns([2.5, 1, 0.8, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
                     wr_col[0].write(clean_ticker)
                     wr_col[1].write(price_str)
                     wr_col[2].write(f"{scr_w}/8")
                     wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
                     wr_col[4].write(str(row.get("Signal", "Neutral")))
-                    wr_col[5].write(s1_val)
-                    if wr_col[6].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                    wr_col[5].write(s1_str)
+                    wr_col[6].markdown(f"<span style='color:{w_t1_color}; font-weight:bold;'>{w_t1_str}</span>", unsafe_allow_html=True)
+                    if wr_col[7].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                         pass
-                    if wr_col[7].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
+                    if wr_col[8].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
                         w_df = w_df.drop(idx)
                         save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
                         st.rerun()
                 else:
-                    wr_col = st.columns([2.5, 1, 1, 1.5, 1.5, 1, 1])
+                    wr_col = st.columns([2.5, 1, 0.8, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
                     wr_col[0].write(f"⚠️ {clean_ticker}")
-                    wr_col[1].write("N/A")
-                    wr_col[2].write("N/A")
-                    wr_col[3].write("N/A")
-                    wr_col[4].write("N/A")
-                    wr_col[5].write("")
-                    if wr_col[6].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
+                    for i in range(1, 8): wr_col[i].write("N/A")
+                    if wr_col[8].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
                         w_df = w_df.drop(idx)
                         save_sheet_data("Watchlist", w_df, ["Ticker"])
                         st.rerun()

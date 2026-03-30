@@ -942,15 +942,19 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     if adx_v >= 50: t_points = 2
     elif adx_v >= 25: t_points = 1
     
-    # 3. Vol (Volume Surge)
+    # 3. Vol (Volume Surge) — direction-aware
+    # High volume only counts BULLISH if the candle closes green.
+    # High volume on a red candle = Institutional Distribution = 0 points.
     v_points = 0
     vol_today = latest.get("Volume", 1)
     vol_20sma = latest.get("Vol_20SMA", 1)
     if pd.isna(vol_20sma) or vol_20sma == 0: vol_20sma = 1
     v_ratio = vol_today / vol_20sma
-    if v_ratio >= 1.5: v_points = 2
-    elif v_ratio >= 1.0: v_points = 1
-    
+    is_green = latest.get("Close", 0) >= latest.get("Open", 0)  # Green candle = accumulation
+    if v_ratio >= 1.5 and is_green: v_points = 2
+    elif v_ratio >= 1.0 and is_green: v_points = 1
+    # Red candle with high volume: v_points stays 0 (Distribution)
+
     # 4. Funda
     f_points = 0
     if fundamentals["roce"] > 15: f_points += 1
@@ -1054,10 +1058,12 @@ def render_control_center():
                             b_vol20 = b_df["Vol_20SMA"].iloc[-1]
                             if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
                             v_ratio = b_vol / b_vol20
-                            
-                            if v_ratio >= 1.5: m_score += 2
-                            elif v_ratio >= 1.0: m_score += 1
-                            
+                            # Direction-aware: only award points on a green (accumulation) candle
+                            is_b_green = b_df["Close"].iloc[-1] >= b_df["Open"].iloc[-1]
+                            if v_ratio >= 1.5 and is_b_green: m_score += 2
+                            elif v_ratio >= 1.0 and is_b_green: m_score += 1
+                            # Red candle + high volume = Distribution → 0 points
+
                             if m_score >= 5: m_rating = "🟢 STRONG BUY"
                             elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
                             elif m_score >= 1: m_rating = "🟡 HOLD"
@@ -1291,6 +1297,8 @@ if search_query:
             vol_20sma_raw = latest.get("Vol_20SMA", 1)
             if pd.isna(vol_20sma_raw) or vol_20sma_raw == 0: vol_20sma_raw = 1
             v_ratio_raw = vol_today_raw / vol_20sma_raw
+            # Candle direction determines Accumulation vs Distribution label
+            is_green = latest.get("Close", 0) >= latest.get("Open", 0)
 
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("##### 🏥 Fundamental & Volume Health")
@@ -1299,8 +1307,16 @@ if search_query:
             h2.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
             h3.metric("Current Volume", f"{int(vol_today_raw):,}")
             h4.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
-            surge_label = "🔥 Institutional Buy" if v_ratio_raw >= 1.5 else "Normal"
-            h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color="normal" if v_ratio_raw >= 1.5 else "off")
+            if v_ratio_raw >= 1.5 and is_green:
+                surge_label = "🔥 Inst. Accumulation"
+                surge_color = "normal"       # renders green ↑
+            elif v_ratio_raw >= 1.5 and not is_green:
+                surge_label = "🩸 Inst. Distribution"
+                surge_color = "inverse"      # renders red ↓
+            else:
+                surge_label = "Normal Volume"
+                surge_color = "off"          # neutral grey
+            h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
 
             # --- Master Rating ---
             total_score, t_points, v_points, s_points, f_points = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})

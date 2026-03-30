@@ -560,15 +560,14 @@ def render_status_hub():
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <div>
                 <div class="status-header">📡 Last Scan Window</div>
-                <div class="status-val">{window_label}</div>
-                {weekend_tag}
+                <div class="status-val">{window_label}</div>{weekend_tag}
             </div>
             <div>{sync_block}</div>
             <div style="text-align:right;">{signals_block}</div>
         </div>
     </div>
     """
-    st.markdown(hub_html, unsafe_allow_html=True)
+    st.markdown(hub_html.replace('\n', ' '), unsafe_allow_html=True)
 
     # ── Force Scan Button (unique key prevents duplicate-widget error) ──
     if st.button(

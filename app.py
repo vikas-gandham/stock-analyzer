@@ -989,14 +989,11 @@ def get_market_condition(df):
 
 
 def render_control_center():
-    # --- Row 1: Batch Processor (Side-by-Side Split) ---
+    # --- Batch Processor (Full Width) ---
     st.markdown("<div style='padding-top: 2rem;'>", unsafe_allow_html=True)
-    c_left, c_right = st.columns(2, gap="large")
-    
-    with c_left:
-        st.subheader("📂 Batch Processor")
-        tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
-    
+    st.subheader("📂 Batch Processor")
+    tab1, tab2 = st.tabs(["📝 Quick Paste", "📁 Upload File"])
+
     def run_batch_scan(w_df):
         try:
             # Force Column Strip
@@ -1149,38 +1146,35 @@ def render_control_center():
                     st.error(f"File reading error: {e}")
             else:
                 st.warning("Please upload a file first.")
-                        
-    # --- Row 1: Batch Results (Right Side) ---
-    with c_right:
-        if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
-            st.subheader("🔥 Watchlist Batch Results")
-            b_results = st.session_state["batch_results"]
-            if not b_results.empty:
-                # Header
-                bh_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
-                bh_col[0].markdown("**Ticker**")
-                bh_col[1].markdown("**Price**")
-                bh_col[2].markdown("**Support**")
-                bh_col[3].markdown("**Safety**")
-                bh_col[4].markdown("**Rating**")
-                bh_col[5].markdown("**Action**")
-                
-                for idx, row in b_results.iterrows():
-                    rb_col = st.columns([2, 1.5, 1.5, 1.5, 2, 2])
-                    rb_col[0].write(row["Ticker"])
-                    rb_col[1].write(f"₹{row['Price']}")
-                    rb_col[2].write(f"₹{row['Support1']}")
-                    rb_col[3].write(row["Safety Score"])
-                    rb_col[4].write(row["Master Rating"])
-                    if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}", on_click=set_search_ticker, args=(row["Ticker"],)):
-                        pass
-            else:
-                st.info("❌ No stocks passed the scan.")
-        else:
-            st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
-            st.subheader("🔥 Watchlist Batch Results")
-            st.markdown("<p style='color: gray; padding-top: 10px;'>Results will appear here after scanning.</p>", unsafe_allow_html=True)
+    st.markdown("<br><br>", unsafe_allow_html=True)
 
+    # --- Batch Results (Full Width) ---
+    if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
+        st.subheader("🔥 Watchlist Batch Results")
+        b_results = st.session_state["batch_results"]
+        if not b_results.empty:
+            # Header — wider ratios for full-screen display
+            bh_col = st.columns([3, 1.5, 1.5, 1.5, 2.5, 2])
+            bh_col[0].markdown("**Ticker**")
+            bh_col[1].markdown("**Price**")
+            bh_col[2].markdown("**Support**")
+            bh_col[3].markdown("**Safety**")
+            bh_col[4].markdown("**Rating**")
+            bh_col[5].markdown("**Action**")
+
+            for idx, row in b_results.iterrows():
+                rb_col = st.columns([3, 1.5, 1.5, 1.5, 2.5, 2])
+                rb_col[0].write(row["Ticker"])
+                rb_col[1].write(f"₹{row['Price']}")
+                rb_col[2].write(f"₹{row['Support1']}")
+                rb_col[3].write(row["Safety Score"])
+                rb_col[4].write(row["Master Rating"])
+                if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}", on_click=set_search_ticker, args=(row["Ticker"],)):
+                    pass
+        else:
+            st.info("❌ No stocks passed the scan.")
+    else:
+        st.markdown("<p style='color: gray; padding-top: 10px;'>Results will appear here after scanning.</p>", unsafe_allow_html=True)
 
 
 # ===================================================================
@@ -1471,199 +1465,200 @@ if search_query:
 # LIVE PORTFOLIO & WATCHLIST — Middle Layer
 # ===================================================================
 st.markdown("---")
-col_p1, col_p2 = st.columns([1, 1])
 
-with col_p1:
-    st.subheader("💼 Live Portfolio")
-    if st.session_state["sheets_error"]:
-        st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
-    else:
-        with st.expander("➕ Add Existing Trade Manually"):
-            m_ticker = st.text_input("Ticker", placeholder="e.g. RELIANCE.NS", key="m_ticker_input")
-            m_price = st.number_input("Average Buy Price", min_value=0.0, step=1.0, key="m_price_input")
-            m_qty = st.number_input("Quantity", min_value=1, step=1, key="m_qty_input")
-            if st.button("Save to Portfolio"):
-                if m_ticker:
-                    clean_t = sanitize_ticker(m_ticker)
-                    p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
-                    
-                    if clean_t in p_df["Ticker"].values:
-                        p_df.loc[p_df["Ticker"] == clean_t, ["Buy_Price", "Quantity"]] = [m_price, m_qty]
-                        st.info(f"Updated {clean_t} in Portfolio.")
-                    else:
-                        new_row = pd.DataFrame([{"Ticker": clean_t, "Buy_Price": m_price, "Quantity": m_qty, "Signal": "✅ HOLD"}])
-                        p_df = pd.concat([p_df, new_row], ignore_index=True)
-                        st.success(f"Added {clean_t} to Portfolio!")
-                    
-                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
-                    # Reset via rerun
+# ── Live Portfolio (Full Width) ───────────────────────────────────
+st.subheader("💼 Live Portfolio")
+if st.session_state["sheets_error"]:
+    st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
+else:
+    with st.expander("➕ Add Existing Trade Manually"):
+        m_ticker = st.text_input("Ticker", placeholder="e.g. RELIANCE.NS", key="m_ticker_input")
+        m_price = st.number_input("Average Buy Price", min_value=0.0, step=1.0, key="m_price_input")
+        m_qty = st.number_input("Quantity", min_value=1, step=1, key="m_qty_input")
+        if st.button("Save to Portfolio"):
+            if m_ticker:
+                clean_t = sanitize_ticker(m_ticker)
+                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
+
+                if clean_t in p_df["Ticker"].values:
+                    p_df.loc[p_df["Ticker"] == clean_t, ["Buy_Price", "Quantity"]] = [m_price, m_qty]
+                    st.info(f"Updated {clean_t} in Portfolio.")
+                else:
+                    new_row = pd.DataFrame([{"Ticker": clean_t, "Buy_Price": m_price, "Quantity": m_qty, "Signal": "✅ HOLD"}])
+                    p_df = pd.concat([p_df, new_row], ignore_index=True)
+                    st.success(f"Added {clean_t} to Portfolio!")
+
+                save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                st.rerun()
+
+p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
+if not p_df.empty:
+    # Header Row — wider ratios for full-screen display
+    h_col = st.columns([2.5, 1, 1.2, 1.5, 1.5, 1.5, 0.5])
+    h_col[0].markdown("**Ticker**")
+    h_col[1].markdown("**P&L %**")
+    h_col[2].markdown("**Status**")
+    h_col[3].markdown("**Master**")
+    h_col[4].markdown("**Signal**")
+    h_col[5].markdown("**Action**")
+    h_col[6].markdown("**Del**")
+
+    for idx, row in p_df.iterrows():
+        ticker = row["Ticker"]
+        if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
+        clean_ticker = sanitize_ticker(ticker)
+        buy_price = row["Buy_Price"]
+
+        try:
+            p_data = fetch_ohlcv(clean_ticker)
+
+            # Force Sync / Smart Search Fallback
+            if p_data.empty:
+                try:
+                    search_res = yf.Search(clean_ticker, max_results=1).quotes
+                    if search_res:
+                        new_sym = search_res[0]['symbol']
+                        p_data = fetch_ohlcv(new_sym)
+                        clean_ticker = new_sym
+                except Exception: pass
+
+            if not p_data.empty:
+                p_data = compute_indicators(p_data)
+                funda = fetch_fundamentals(clean_ticker)
+                score, _, _, _, _ = calculate_master_score(p_data, funda)
+                cmp = p_data["Close"].iloc[-1]
+                s1 = p_data["Support_1"].iloc[-1]
+                pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
+
+                # Exit Logic
+                if cmp < s1: status, color = "🚨 SELL (Below Support)", "#FF4B4B"
+                elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
+                else: status, color = "✅ HOLD", "#00D4AA"
+
+                r_col = st.columns([2.5, 1, 1.2, 1.5, 1.5, 1.5, 0.5])
+                r_col[0].write(clean_ticker)
+                r_col[1].write(f"{pnl:+.2f}%")
+                r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
+                r_col[3].write(f"Rating: {score}/8")
+                r_col[4].write(str(row.get("Signal", "✅ HOLD")))
+                if r_col[5].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                    pass
+                if r_col[6].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
+                    p_df = p_df.drop(idx)
+                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
                     st.rerun()
+            else:
+                r_col = st.columns([2.5, 1, 1.5, 1.5, 1.5, 1])
+                r_col[0].write(f"⚠️ {clean_ticker}")
+                r_col[1].write("N/A")
+                r_col[2].write("Invalid Ticker")
+                r_col[3].write("N/A")
+                r_col[4].write("")
+                if r_col[5].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
+                    p_df = p_df.drop(idx)
+                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                    st.rerun()
+        except Exception:
+            st.error(f"Error processing {clean_ticker}")
+else:
+    st.info("Portfolio is empty. Add trades manually or from the calculator.")
 
-    p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
-    if not p_df.empty:
-        # Header Row
-        h_col = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 0.5])
-        h_col[0].markdown("**Ticker**")
-        h_col[1].markdown("**P&L %**")
-        h_col[2].markdown("**Status**")
-        h_col[3].markdown("**Master**")
-        h_col[4].markdown("**Signal**")
-        h_col[5].markdown("**Action**")
-        h_col[6].markdown("**Delete**")
-        
-        for idx, row in p_df.iterrows():
+st.markdown("<br><br>", unsafe_allow_html=True)
+
+# ── Watchlist (Full Width) ───────────────────────────────────────
+w_input = ""  # Defined here to prevent NameError
+st.subheader("⭐ Watchlist")
+if st.session_state.get("sheets_error"):
+    st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
+else:
+    w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
+
+w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
+if w_input:
+    clean_w = sanitize_ticker(w_input)
+    if clean_w not in w_df["Ticker"].values:
+        new_row = pd.DataFrame([{"Ticker": clean_w, "Signal": "Neutral"}])
+        w_df = pd.concat([w_df, new_row], ignore_index=True)
+        save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
+        st.success(f"Added {clean_w} to Watchlist!")
+    else:
+        st.info(f"{clean_w} is already in Watchlist.")
+
+    # Reset via rerun
+    st.rerun()
+
+if not w_df.empty:
+    # Header — wider ratios for full-screen display
+    wh_col = st.columns([2.5, 1, 1, 1.5, 1.5, 1.2, 1, 0.5])
+    wh_col[0].markdown("**Ticker**")
+    wh_col[1].markdown("**Price**")
+    wh_col[2].markdown("**Rating**")
+    wh_col[3].markdown("**Condition**")
+    wh_col[4].markdown("**Signal**")
+    wh_col[5].markdown("**Support**")
+    wh_col[6].markdown("**Analyze**")
+    wh_col[7].markdown("**🗑️**")
+
+    # Wrapped Container with Throttle to prevent 'SHREERAMA.NS' errors
+    with st.container():
+        for idx, row in w_df.iterrows():
+            time.sleep(0.05) # Minor throttle for yfinance
             ticker = row["Ticker"]
             if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
             clean_ticker = sanitize_ticker(ticker)
-            buy_price = row["Buy_Price"]
-            
             try:
-                p_data = fetch_ohlcv(clean_ticker)
-                
+                w_data = fetch_ohlcv(clean_ticker)
+
                 # Force Sync / Smart Search Fallback
-                if p_data.empty:
+                if w_data.empty:
                     try:
                         search_res = yf.Search(clean_ticker, max_results=1).quotes
                         if search_res:
                             new_sym = search_res[0]['symbol']
-                            p_data = fetch_ohlcv(new_sym)
+                            w_data = fetch_ohlcv(new_sym)
                             clean_ticker = new_sym
                     except Exception: pass
 
-                if not p_data.empty:
-                    p_data = compute_indicators(p_data)
-                    funda = fetch_fundamentals(clean_ticker)
-                    score, _, _, _, _ = calculate_master_score(p_data, funda)
-                    cmp = p_data["Close"].iloc[-1]
-                    s1 = p_data["Support_1"].iloc[-1]
-                    pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
-                    
-                    # Exit Logic
-                    if cmp < s1: status, color = "🚨 SELL (Below Support)", "#FF4B4B"
-                    elif score < 4: status, color = "⚠️ WEAK (Watch)", "#FFD700"
-                    else: status, color = "✅ HOLD", "#00D4AA"
-                    
-                    r_col = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 0.5])
-                    r_col[0].write(clean_ticker)
-                    r_col[1].write(f"{pnl:+.2f}%")
-                    r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
-                    r_col[3].write(f"Rating: {score}/8")
-                    r_col[4].write(str(row.get("Signal", "✅ HOLD")))
-                    if r_col[5].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                if not w_data.empty:
+                    w_data = compute_indicators(w_data)
+                    f_w = fetch_fundamentals(clean_ticker)
+                    scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
+
+                    price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
+                    s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
+
+                    # Unified Marker Logic
+                    w_label, w_color, _ = get_market_condition(w_data)
+
+                    wr_col = st.columns([2.5, 1, 1, 1.5, 1.5, 1.2, 1, 0.5])
+                    wr_col[0].write(clean_ticker)
+                    wr_col[1].write(price_str)
+                    wr_col[2].write(f"{scr_w}/8")
+                    wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
+                    wr_col[4].write(str(row.get("Signal", "Neutral")))
+                    wr_col[5].write(s1_val)
+                    if wr_col[6].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                         pass
-                    if r_col[6].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
-                        p_df = p_df.drop(idx)
-                        save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
+                    if wr_col[7].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
+                        w_df = w_df.drop(idx)
+                        save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
                         st.rerun()
                 else:
-                    r_col = st.columns([2, 1.5, 1.5, 2, 2, 2])
-                    r_col[0].write(f"⚠️ {clean_ticker}")
-                    r_col[1].write("N/A")
-                    r_col[2].write("Invalid Ticker")
-                    r_col[3].write("N/A")
-                    r_col[4].write("")
-                    if r_col[5].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
-                        p_df = p_df.drop(idx)
-                        save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                    wr_col = st.columns([2.5, 1, 1, 1.5, 1.5, 1, 1])
+                    wr_col[0].write(f"⚠️ {clean_ticker}")
+                    wr_col[1].write("N/A")
+                    wr_col[2].write("N/A")
+                    wr_col[3].write("N/A")
+                    wr_col[4].write("N/A")
+                    wr_col[5].write("")
+                    if wr_col[6].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
+                        w_df = w_df.drop(idx)
+                        save_sheet_data("Watchlist", w_df, ["Ticker"])
                         st.rerun()
             except Exception:
                 st.error(f"Error processing {clean_ticker}")
-    else:
-        st.info("Portfolio is empty. Add trades manually or from the calculator.")
-
-with col_p2:
-    w_input = "" # Defined here to prevent NameError
-    st.subheader("⭐ Watchlist")
-    if st.session_state.get("sheets_error"):
-        st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
-    else:
-        w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
-    w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
-    if w_input:
-        clean_w = sanitize_ticker(w_input)
-        if clean_w not in w_df["Ticker"].values:
-            new_row = pd.DataFrame([{"Ticker": clean_w, "Signal": "Neutral"}])
-            w_df = pd.concat([w_df, new_row], ignore_index=True)
-            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
-            st.success(f"Added {clean_w} to Watchlist!")
-        else:
-            st.info(f"{clean_w} is already in Watchlist.")
-        
-        # Reset via rerun
-        st.rerun()
-
-    if not w_df.empty:
-        # Header
-        wh_col = st.columns([1.5, 1, 1, 1.2, 1.5, 1.2, 1, 0.5])
-        wh_col[0].markdown("**Ticker**")
-        wh_col[1].markdown("**Price**")
-        wh_col[2].markdown("**Rating**")
-        wh_col[3].markdown("**Condition**")
-        wh_col[4].markdown("**Signal**")
-        wh_col[5].markdown("**Support**")
-        wh_col[6].markdown("**Analyze**")
-        wh_col[7].markdown("**🗑️**")
-        
-        # Wrapped Container with Throttle to prevent 'SHREERAMA.NS' errors
-        with st.container():
-            for idx, row in w_df.iterrows():
-                time.sleep(0.05) # Minor throttle for yfinance
-                ticker = row["Ticker"]
-                if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
-                clean_ticker = sanitize_ticker(ticker)
-                try:
-                    w_data = fetch_ohlcv(clean_ticker)
-                    
-                    # Force Sync / Smart Search Fallback
-                    if w_data.empty:
-                        try:
-                            search_res = yf.Search(clean_ticker, max_results=1).quotes
-                            if search_res:
-                                new_sym = search_res[0]['symbol']
-                                w_data = fetch_ohlcv(new_sym)
-                                clean_ticker = new_sym
-                        except Exception: pass
-
-                    if not w_data.empty:
-                        w_data = compute_indicators(w_data)
-                        f_w = fetch_fundamentals(clean_ticker)
-                        scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
-                        
-                        price_str = f"₹{w_data['Close'].iloc[-1]:,.2f}"
-                        s1_val = f"₹{w_data['Support_1'].iloc[-1]:,.2f}"
-                        
-                        # Unified Marker Logic
-                        w_label, w_color, _ = get_market_condition(w_data)
-                        
-                        wr_col = st.columns([1.5, 1, 1, 1.2, 1.5, 1.2, 1, 0.5])
-                        wr_col[0].write(clean_ticker)
-                        wr_col[1].write(price_str)
-                        wr_col[2].write(f"{scr_w}/8")
-                        wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
-                        wr_col[4].write(str(row.get("Signal", "Neutral")))
-                        wr_col[5].write(s1_val)
-                        if wr_col[6].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
-                            pass
-                        if wr_col[7].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
-                            w_df = w_df.drop(idx)
-                            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
-                            st.rerun()
-                    else:
-                        wr_col = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1, 1])
-                        wr_col[0].write(f"⚠️ {clean_ticker}")
-                        wr_col[1].write("N/A")
-                        wr_col[2].write("N/A")
-                        wr_col[3].write("N/A")
-                        wr_col[4].write("N/A")
-                        wr_col[5].write("")
-                        if wr_col[6].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
-                            w_df = w_df.drop(idx)
-                            save_sheet_data("Watchlist", w_df, ["Ticker"])
-                            st.rerun()
-                except Exception:
-                    st.error(f"Error processing {clean_ticker}")
-    else:
-        st.info("Watchlist is empty. Search and pin stocks or add manually.")
+else:
+    st.info("Watchlist is empty. Search and pin stocks or add manually.")
 
 # ===================================================================
 # BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side Split)

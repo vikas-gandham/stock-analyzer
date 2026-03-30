@@ -242,41 +242,61 @@ def ensure_worksheets_exist(conn):
         st.session_state["sheets_error"] = True
 
 
-# Global Connection Handle
+# ── Persistent connection factory (survives reruns via cache_resource) ──────
+@st.cache_resource
+def get_persistent_conn():
+    """Create the GSheets connection exactly once per app lifetime."""
+    return st.connection("gsheets", type=GSheetsConnection)
+
+
+# Global Connection Handle — resolved once at startup, reused on every rerun
 conn = None
 
 # 1. Robust Secrets Check
 if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
     st.session_state["sheets_error"] = True
     st.session_state["sheets_error_msg"] = "Missing [connections.gsheets] section in secrets.toml."
-
-# 2. Key Sanitization — applied immediately on read to avoid \\n artifacts
-try:
-    if not st.session_state.get("sheets_error"):
-        raw_key = st.secrets["connections"]["gsheets"]["private_key"]
-        # Immediately sanitize escape sequences written as literal \n
-        sanitized_key = raw_key.replace('\\n', '\n').strip()
-except Exception as _key_err:
-    st.session_state["sheets_error"] = True
-    st.session_state["sheets_error_msg"] = f"Private key read error: {_key_err}"
-
-# 3. Main Connection Initialization — verbose error so the exact failure is visible
-if not st.session_state.get("sheets_error"):
+else:
+    # 2. Key Sanitization — applied immediately on read to avoid \\n artifacts
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        ensure_worksheets_exist(conn)
-    except Exception as _conn_err:
+        raw_key = st.secrets["connections"]["gsheets"]["private_key"]
+        sanitized_key = raw_key.replace('\\n', '\n').strip()  # noqa: F841
+    except Exception as _key_err:
         st.session_state["sheets_error"] = True
-        st.session_state["sheets_error_msg"] = str(_conn_err)
-        conn = None
+        st.session_state["sheets_error_msg"] = f"Private key read error: {_key_err}"
+
+    # 3. Main Connection Initialization — cached, so the handshake only happens once
+    if not st.session_state.get("sheets_error"):
+        try:
+            conn = get_persistent_conn()
+            ensure_worksheets_exist(conn)
+        except Exception as _conn_err:
+            st.session_state["sheets_error"] = True
+            st.session_state["sheets_error_msg"] = str(_conn_err)
+            conn = None
+
+
+def get_conn():
+    """Return the active connection, attempting a reconnect if the handle is None."""
+    global conn
+    if conn is not None:
+        return conn
+    if st.session_state.get("sheets_error"):
+        return None
+    try:
+        conn = get_persistent_conn()
+        return conn
+    except Exception:
+        return None
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
     """Read a worksheet with non-blocking error handling."""
-    if st.session_state.get("sheets_error") or conn is None:
+    active_conn = get_conn()
+    if st.session_state.get("sheets_error") or active_conn is None:
         return pd.DataFrame(columns=columns)
     try:
-        df = conn.read(worksheet=worksheet, ttl=0)
+        df = active_conn.read(worksheet=worksheet, ttl=0)
         if df is None or df.empty:
             return pd.DataFrame(columns=columns)
         # Ensure all columns exist
@@ -291,17 +311,24 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
 
 
 def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
-    """Update a worksheet with non-blocking error handling."""
-    if st.session_state["sheets_error"] or conn is None:
+    """Update a worksheet with non-blocking error handling.
+
+    Includes a 2-second cooldown after every successful write to avoid
+    hitting the Google Sheets API write-quota limit.
+    """
+    active_conn = get_conn()
+    if st.session_state.get("sheets_error") or active_conn is None:
         st.error("⚠️ Cannot save: Google Sheets Connection is currently offline.")
         return
     if df.empty:
         df = pd.DataFrame(columns=columns)
     try:
-        conn.update(worksheet=worksheet, data=df)
+        active_conn.update(worksheet=worksheet, data=df)
+        time.sleep(2)   # Quota protection — prevent 429 / Write-Rate-Limit errors
     except Exception:
         try:
-            conn.create(worksheet=worksheet, data=df)
+            active_conn.create(worksheet=worksheet, data=df)
+            time.sleep(2)   # Quota protection on create path too
         except Exception:
             st.error(f"⚠️ Failed to save to {worksheet}. Please check Google Sheets permissions.")
 
@@ -313,10 +340,15 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
 SCAN_WINDOWS = ["09:30", "11:30", "13:30", "14:30", "15:15"]
 
 def background_batch_scan():
-    """Background scanner to update Sheet technicals and signals."""
-    if st.session_state["sheets_error"] or conn is None:
+    """Background scanner to update Sheet technicals and signals.
+
+    Uses get_conn() so it always has a live connection handle even when
+    called from the Force-Scan button after a rerun cycle.
+    """
+    active_conn = get_conn()   # recover connection if global handle was lost
+    if st.session_state.get("sheets_error") or active_conn is None:
         return
-    
+
     with st.spinner("🚀 Running Automated Market Scan..."):
         # 1. Portfolio Scan
         p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity", "Signal"])
@@ -353,28 +385,38 @@ def background_batch_scan():
                             w_df.at[idx, "Signal"] = "Neutral"
                 except: pass
             save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
-            
-        # 3. Log to ScanHistory
-        try:
-            sig_count = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) + len(w_df[w_df["Signal"] == "🔥 BUY NOW"])
-            now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-            h_df = load_sheet_data("ScanHistory", ["Window", "Timestamp", "SignalCount"])
-            new_log = pd.DataFrame([{"Window": "Auto/Manual", "Timestamp": now_ts, "SignalCount": sig_count}])
-            h_df = pd.concat([h_df, new_log], ignore_index=True)
-            save_sheet_data("ScanHistory", h_df, ["Window", "Timestamp", "SignalCount"])
-        except Exception: pass
+
+        # 3. Log to ScanHistory — only when connection is confirmed active
+        if get_conn() is not None:
+            try:
+                sig_count = (
+                    len(p_df[p_df["Signal"] == "🚨 URGENT SELL"])
+                    + len(w_df[w_df["Signal"] == "🔥 BUY NOW"])
+                )
+                now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                h_df = load_sheet_data("ScanHistory", ["Window", "Timestamp", "SignalCount"])
+                new_log = pd.DataFrame([{"Window": "Auto/Manual", "Timestamp": now_ts, "SignalCount": sig_count}])
+                h_df = pd.concat([h_df, new_log], ignore_index=True)
+                save_sheet_data("ScanHistory", h_df, ["Window", "Timestamp", "SignalCount"])
+            except Exception:
+                pass
 
 
 def run_scheduled_scan():
-    """Check if current time matches a Decision Window and trigger scan."""
-    if st.session_state["sheets_error"] or conn is None:
+    """Check if current time matches a Decision Window and trigger scan.
+
+    Metadata reads/writes are gated behind an active-connection check so
+    a mid-session auth drop never corrupts the Metadata sheet.
+    """
+    active_conn = get_conn()
+    if st.session_state.get("sheets_error") or active_conn is None:
         return
 
     now = datetime.now()
     current_time_str = now.strftime("%H:%M")
     current_date_str = now.strftime("%Y-%m-%d")
-    
-    # Check if a scan window exists now or earlier today that was not scanned
+
+    # Metadata read — only proceed if connection is confirmed active
     meta_df = load_sheet_data("Metadata", ["Key", "Value"])
     last_scan_val = "None"
     if not meta_df.empty and "last_scan_time" in meta_df["Key"].values:
@@ -383,12 +425,14 @@ def run_scheduled_scan():
     # 1. First-Load / Empty History Fail-Safe
     if last_scan_val == "None":
         background_batch_scan()
-        sync_now = datetime.now().strftime("%I:%M %p")
-        new_meta = pd.DataFrame([
-            {"Key": "last_scan_time", "Value": f"{current_date_str}_INIT"},
-            {"Key": "last_sync_actual", "Value": sync_now}
-        ])
-        save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+        # Re-check connection after scan (quota sleep may have elapsed)
+        if get_conn() is not None:
+            sync_now = datetime.now().strftime("%I:%M %p")
+            new_meta = pd.DataFrame([
+                {"Key": "last_scan_time", "Value": f"{current_date_str}_INIT"},
+                {"Key": "last_sync_actual", "Value": sync_now},
+            ])
+            save_sheet_data("Metadata", new_meta, ["Key", "Value"])
         return
 
     # 2. Daily Schedule Loop
@@ -397,19 +441,20 @@ def run_scheduled_scan():
             window_scan_key = f"{current_date_str}_{window}"
             if last_scan_val != window_scan_key:
                 background_batch_scan()
-                # Update Metadata
-                sync_now = datetime.now().strftime("%I:%M %p")
-                new_meta = pd.DataFrame([
-                    {"Key": "last_scan_time", "Value": window_scan_key},
-                    {"Key": "last_sync_actual", "Value": sync_now}
-                ])
-                save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+                # Re-check connection before writing Metadata
+                if get_conn() is not None:
+                    sync_now = datetime.now().strftime("%I:%M %p")
+                    new_meta = pd.DataFrame([
+                        {"Key": "last_scan_time", "Value": window_scan_key},
+                        {"Key": "last_sync_actual", "Value": sync_now},
+                    ])
+                    save_sheet_data("Metadata", new_meta, ["Key", "Value"])
                 break
 
 
 def render_status_hub():
     """📡 Display high-visibility Scan Status Hub UI."""
-    if st.session_state.get("sheets_error") or conn is None:
+    if st.session_state.get("sheets_error") or get_conn() is None:
         # Show verbose offline reason so user can diagnose the connection failure
         err_msg = st.session_state.get("sheets_error_msg", "Unknown connection error")
         st.markdown(
@@ -419,6 +464,14 @@ def render_status_hub():
             unsafe_allow_html=True,
         )
         st.error(f"Google Sheets Connection Error: {err_msg}")
+
+        # ── Retry Connection button ───────────────────────────────────
+        if st.button("🔁 Retry Connection", key="retry_conn_btn"):
+            # Clear the cached resource so the next call rebuilds the handshake
+            st.cache_resource.clear()
+            st.session_state["sheets_error"] = False
+            st.session_state.pop("sheets_error_msg", None)
+            st.rerun()
         return
 
     # Load All Data required for summary

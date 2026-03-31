@@ -496,6 +496,7 @@ def render_status_hub():
     meta_df = load_sheet_data("Metadata", ["Key", "Value"])
     p_df = load_sheet_data("Portfolio", ["Signal"])
     w_df = load_sheet_data("Watchlist", ["Signal"])
+    nifty_price, nifty_pct = fetch_nifty_baseline()
 
     # Defaults
     now = datetime.now()
@@ -553,11 +554,18 @@ def render_status_hub():
     )
 
     # ── Hub Panel ────────────────────────────────────────────────────
-    # Build the two variable sub-blocks first so the f-string stays clean
+    # Build the variable sub-blocks first so the f-string stays clean
     sync_block = (
         f"<div class='status-header'>⏱️ Sync Time</div>"
         f"<div class='status-val'>Triggered at {sync_time}</div>"
     )
+    
+    nifty_color = "#00D4AA" if nifty_pct >= 0 else "#FF4B4B"
+    macro_block = (
+        f"<div class='status-header'>📈 NIFTY 50</div>"
+        f"<div class='status-val'>{nifty_price:,.2f} <span style='color: {nifty_color}; font-size: 0.85rem;'>({nifty_pct:+.2f}%)</span></div>"
+    )
+
     signals_block = (
         f"<div class='status-header'>🔥 Live Signals</div>"
         f"<div class='status-val'>"
@@ -573,6 +581,7 @@ def render_status_hub():
                 <div class="status-header">📡 Last Scan Window</div>
                 <div class="status-val">{window_label}</div>{weekend_tag}
             </div>
+            <div>{macro_block}</div>
             <div>{sync_block}</div>
             <div style="text-align:right;">{signals_block}</div>
         </div>
@@ -600,6 +609,20 @@ def render_status_hub():
             st.rerun()
         except Exception as e:
             st.error(f"❌ Force Scan Failed: {e}")
+
+
+@st.cache_data(ttl=300)
+def fetch_nifty_baseline() -> tuple[float, float]:
+    """Fetch recent Nifty 50 (^NSEI) data and return (last_close, pct_change)."""
+    try:
+        nifty = yf.download("^NSEI", period="5d", interval="1d", progress=False, auto_adjust=True)
+        if nifty.empty: return 0.0, 0.0
+        latest_close = float(nifty["Close"].iloc[-1])
+        prev_close = float(nifty["Close"].iloc[-2]) if len(nifty) > 1 else latest_close
+        pct_change = ((latest_close - prev_close) / prev_close) * 100
+        return round(latest_close, 2), round(pct_change, 2)
+    except Exception:
+        return 0.0, 0.0
 
 
 @st.cache_data(ttl=900)

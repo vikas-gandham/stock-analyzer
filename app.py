@@ -831,21 +831,20 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def summarize_with_gemini(headlines: list[str], company: str, api_key: str) -> str:
-    """Send headlines to Gemini and return a 3-bullet catalyst summary."""
+def summarize_with_gemini(data_dict: dict, company: str, api_key: str) -> str:
+    """Send quantitative data to Gemini and return a 2-bullet technical summary."""
     try:
         from google import genai
 
         client = genai.Client(api_key=api_key)
 
-        bullet_list = "\n".join(f"- {h}" for h in headlines)
         prompt = (
-            f"Read these recent news headlines for {company}:\n\n"
-            f"{bullet_list}\n\n"
-            "Give me a 3-bullet-point summary explaining the fundamental or "
-            "macroeconomic catalysts driving this stock's recent price action. "
-            "Ignore noise, focus on business moves, volume drivers, or sector news. "
-            "Keep each bullet concise (1-2 sentences)."
+            f"Act as a quantitative trading assistant. Analyze this data for {company}:\n"
+            f"{data_dict}\n"
+            "Provide a 2-bullet-point technical summary. "
+            "Bullet 1: Assess the entry risk and momentum. "
+            "Bullet 2: Highlight any fundamental or volume red/green flags. "
+            "Keep it extremely concise, objective, and strictly based on these numbers."
         )
 
         response = client.models.generate_content(
@@ -1389,28 +1388,30 @@ if search_query:
             fig = build_chart(df, display_label)
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- News Section ---
-            st.subheader("📰 Recent Catalysts")
-            with st.spinner("Fetching news..."):
-                articles = fetch_news(company_name)
-            if articles:
-                for i, art in enumerate(articles, 1):
-                    st.markdown(f"**{i}.** [{art.get('title')}]({art.get('url')})  \n<sub>{art.get('publisher', {}).get('title')} · {art.get('published date')}</sub>", unsafe_allow_html=True)
-                # AI Summary
-                headlines = [art.get("title") for art in articles if art.get("title")]
-                saved_key = st.session_state.get("gemini_key")
-                if saved_key and headlines:
-                    st.markdown("---")
-                    summary_key = f"ai_summary_{full_ticker}"
-                    if summary_key not in st.session_state or st.session_state[summary_key] is None:
-                        if st.button("Generate AI Catalyst Summary"):
-                            with st.spinner("Generating..."):
-                                summary = summarize_with_gemini(headlines, company_name, saved_key)
-                                st.session_state[summary_key] = summary
-                                st.rerun()
-                    else:
-                        st.markdown(f'<div class="story-section">{st.session_state[summary_key]}</div>', unsafe_allow_html=True)
-            else: st.info("No recent news found.")
+            # --- AI Quantitative Summary Section ---
+            st.subheader("📊 AI Quantitative Summary")
+            saved_key = st.session_state.get("gemini_key")
+            if saved_key:
+                summary_key = f"ai_summary_{full_ticker}"
+                # Force refresh if ticker changed or summary missing
+                if summary_key not in st.session_state or st.session_state[summary_key] is None:
+                    if st.button("Generate AI Quantitative Summary"):
+                        with st.spinner("Generating..."):
+                            data_dict = {
+                                "Price": latest['Close'],
+                                "Support": support_val,
+                                "Master Score": f"{total_score}/8",
+                                "Condition": cond_label,
+                                "Volume Surge": f"{v_ratio_raw:.2f}x",
+                                "ROCE": f"{roce:.2f}%"
+                            }
+                            summary = summarize_with_gemini(data_dict, company_name, saved_key)
+                            st.session_state[summary_key] = summary
+                            st.rerun()
+                else:
+                    st.markdown(f'<div class="story-section">{st.session_state[summary_key]}</div>', unsafe_allow_html=True)
+            else:
+                st.info("Please enter a Gemini API Key in the settings below to enable AI summaries.")
 
             st.divider()
             # --- 1% Risk Calculator (Decoupled & Synced) ---

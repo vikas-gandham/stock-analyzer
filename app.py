@@ -494,8 +494,8 @@ def render_status_hub():
 
     # Load All Data required for summary
     meta_df = load_sheet_data("Metadata", ["Key", "Value"])
-    p_df = load_sheet_data("Portfolio", ["Signal"])
-    w_df = load_sheet_data("Watchlist", ["Signal"])
+    p_df = load_sheet_data("Portfolio", ["Ticker", "Signal"])
+    w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
     nifty_price, nifty_pct = fetch_nifty_baseline()
 
     # Defaults
@@ -528,6 +528,15 @@ def render_status_hub():
         l_sync = meta_df.loc[meta_df["Key"] == "last_sync_actual", "Value"]
         if not l_sync.empty and pd.notna(l_sync.iloc[0]):
             sync_time = str(l_sync.iloc[0])
+
+    # Clean Data ─ Filter out phantom rows (blanks/NaNs)
+    if not p_df.empty:
+        p_df = p_df[p_df["Ticker"].astype(str).str.strip() != ""]
+        p_df = p_df[p_df["Ticker"].astype(str).str.lower() != "nan"]
+
+    if not w_df.empty:
+        w_df = w_df[w_df["Ticker"].astype(str).str.strip() != ""]
+        w_df = w_df[w_df["Ticker"].astype(str).str.lower() != "nan"]
 
     # Count Signals
     sell_alerts = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) if not p_df.empty else 0

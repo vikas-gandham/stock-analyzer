@@ -291,53 +291,64 @@ def get_conn():
         st.session_state.pop("sheets_error_msg", None)
         return c
     except Exception as e:
+        st.cache_resource.clear()
         st.session_state["sheets_error"] = True
         st.session_state["sheets_error_msg"] = str(e)
         return None
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
-    """Read a worksheet with non-blocking error handling."""
+    """Read a worksheet with 3-attempt retry loop and backoff."""
     active_conn = get_conn()
-    # Early-exit guard: never call .read() on a None connection
     if active_conn is None:
         return pd.DataFrame(columns=columns)
-    try:
-        df = active_conn.read(worksheet=worksheet, ttl=0)
-        if df is None or df.empty:
-            return pd.DataFrame(columns=columns)
-        # Ensure all columns exist
-        df = df.dropna(how="all")
-        for col in columns:
-            if col not in df.columns:
-                df[col] = None
-        return df[columns]
-    except Exception:
-        # Silent fail to prevent crash
-        return pd.DataFrame(columns=columns)
+    
+    for attempt in range(3):
+        try:
+            df = active_conn.read(worksheet=worksheet, ttl=0)
+            if df is None or df.empty:
+                return pd.DataFrame(columns=columns)
+            # Ensure all columns exist
+            df = df.dropna(how="all")
+            for col in columns:
+                if col not in df.columns:
+                    df[col] = None
+            return df[columns]
+        except Exception:
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+            else:
+                st.cache_resource.clear()
+                st.session_state["sheets_error"] = True
+                return pd.DataFrame(columns=columns)
+    return pd.DataFrame(columns=columns)
 
 
 def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
-    """Update a worksheet with non-blocking error handling.
-
-    Includes a 2-second cooldown after every successful write to avoid
-    hitting the Google Sheets API write-quota limit.
-    """
+    """Update a worksheet with 3-attempt retry loop and fallback create."""
     active_conn = get_conn()
     if st.session_state.get("sheets_error") or active_conn is None:
         st.error("⚠️ Cannot save: Google Sheets Connection is currently offline.")
         return
     if df.empty:
         df = pd.DataFrame(columns=columns)
-    try:
-        active_conn.update(worksheet=worksheet, data=df)
-        time.sleep(2)   # Quota protection — prevent 429 / Write-Rate-Limit errors
-    except Exception:
+    
+    for attempt in range(3):
         try:
-            active_conn.create(worksheet=worksheet, data=df)
-            time.sleep(2)   # Quota protection on create path too
-        except Exception:
-            st.error(f"⚠️ Failed to save to {worksheet}. Please check Google Sheets permissions.")
+            # Try to update first, fallback to create if worksheet missing or error
+            try:
+                active_conn.update(worksheet=worksheet, data=df)
+            except Exception:
+                active_conn.create(worksheet=worksheet, data=df)
+            time.sleep(2)
+            return
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+            else:
+                st.cache_resource.clear()
+                st.error(f"⚠️ Failed to save to {worksheet} after 3 attempts: {e}")
+                break
 
 
 # ===================================================================

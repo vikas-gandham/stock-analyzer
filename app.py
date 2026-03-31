@@ -298,14 +298,15 @@ def get_conn():
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
-    """Read a worksheet with 3-attempt retry loop and backoff."""
+    """Read a worksheet with 3-attempt retry loop and 15s cache backoff."""
     active_conn = get_conn()
     if active_conn is None:
         return pd.DataFrame(columns=columns)
     
     for attempt in range(3):
         try:
-            df = active_conn.read(worksheet=worksheet, ttl=0)
+            # Use 15s cache to prevent 429 Quota Exhaustion on reruns
+            df = active_conn.read(worksheet=worksheet, ttl=15)
             if df is None or df.empty:
                 return pd.DataFrame(columns=columns)
             # Ensure all columns exist
@@ -341,12 +342,16 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             except Exception:
                 active_conn.create(worksheet=worksheet, data=df)
             time.sleep(2)
+            # Clear local cache so UI reads the new data immediately
+            st.cache_data.clear()
             return
         except Exception as e:
             if attempt < 2:
                 time.sleep(2 ** attempt)
             else:
                 st.cache_resource.clear()
+                if "429" in str(e) or "RATE_LIMIT" in str(e):
+                    st.error("⚠️ Google API Quota Exceeded. Please wait 60 seconds.")
                 st.error(f"⚠️ Failed to save to {worksheet} after 3 attempts: {e}")
                 break
 

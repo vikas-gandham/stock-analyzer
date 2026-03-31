@@ -1087,7 +1087,7 @@ def render_control_center():
                             risk_pct = ((b_close - b_sup1) / b_close) * 100
                             
                             if b_res1 > b_sup1:
-                                raw_s = ((b_res1 - b_close) / (b_res1 - b_sup1)) * 100
+                                raw_s = ((b_close - b_sup1) / (b_res1 - b_sup1)) * 100
                                 b_score = max(0, min(100, int(raw_s)))
                             else:
                                 b_score = 50
@@ -1388,17 +1388,21 @@ if search_query:
             # --- Pin to Watchlist Button ---
             w_col1, w_col2, w_col3 = st.columns([1, 1, 1])
             with w_col2:
-                if st.button("➕ Add to Watchlist", use_container_width=True):
-                    clean_p = sanitize_ticker(full_ticker)
-                    w_df = load_sheet_data("Watchlist", ["Ticker"])
-                    if clean_p not in w_df["Ticker"].values:
-                        new_row = pd.DataFrame([{"Ticker": clean_p}])
-                        w_df = pd.concat([w_df, new_row], ignore_index=True)
-                        save_sheet_data("Watchlist", w_df, ["Ticker"])
-                        st.success(f"Added {clean_p} to Watchlist!")
-                    else:
-                        st.info(f"{clean_p} is already in Watchlist.")
-                    st.rerun()
+                clean_p = sanitize_ticker(full_ticker)
+                w_df = load_sheet_data("Watchlist", ["Ticker"])
+                
+                if not w_df.empty and clean_p in w_df["Ticker"].values:
+                    st.button("✅ In Watchlist", disabled=True, use_container_width=True)
+                else:
+                    if st.button("➕ Add to Watchlist", use_container_width=True):
+                        # Reload to ensure we have latest if added via other means
+                        w_df = load_sheet_data("Watchlist", ["Ticker"])
+                        if clean_p not in w_df["Ticker"].values:
+                            new_row = pd.DataFrame([{"Ticker": clean_p}])
+                            w_df = pd.concat([w_df, new_row], ignore_index=True)
+                            save_sheet_data("Watchlist", w_df, ["Ticker"])
+                            st.success(f"Added {clean_p} to Watchlist!")
+                            st.rerun()
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)

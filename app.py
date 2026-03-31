@@ -1772,39 +1772,6 @@ else:
 st.markdown("---")
 render_control_center()
 
-# 📝 Batch Trade Plan Exporter
-if "batch_results" in st.session_state and st.session_state["batch_results"] is not None:
-    st.markdown("---")
-    st.markdown("##### 📝 Batch Trade Plan Exporter")
-    edited_df = st.data_editor(
-        st.session_state["batch_results"],
-        hide_index=True,
-        use_container_width=True,
-        key="batch_editor"
-    )
-    st.session_state["batch_results"] = edited_df
-    
-    selected_rows = edited_df[edited_df["Select"] == True]
-    if not selected_rows.empty:
-        cap = st.session_state.get("capital_ext", 300000.0)
-        export_list = []
-        for _, row in selected_rows.iterrows():
-            ep = row["Price"]
-            sl = row["Support1"]
-            shares = math.floor((cap * 0.01) / (ep - sl)) if ep > sl else 0
-            export_list.append({
-                "Ticker": row["Ticker"],
-                "Entry Price": ep,
-                "Stop Loss": sl,
-                "Shares to Buy": shares
-            })
-            
-        st.download_button(
-            label="⬇️ Download Trade Plan",
-            data=pd.DataFrame(export_list).to_csv(index=False),
-            file_name="Batch_Trade_Plan.csv",
-            mime="text/csv",
-        )
 
 # ===================================================================
 # Footer

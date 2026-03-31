@@ -351,8 +351,9 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             else:
                 st.cache_resource.clear()
                 if "429" in str(e) or "RATE_LIMIT" in str(e):
-                    st.error("⚠️ Google API Quota Exceeded. Please wait 60 seconds.")
-                st.error(f"⚠️ Failed to save to {worksheet} after 3 attempts: {e}")
+                    st.warning(f"⚠️ Google API Quota Exceeded for {worksheet}. The app will try again later.")
+                else:
+                    st.error(f"⚠️ Failed to save to {worksheet}. Please check permissions.")
                 break
 
 
@@ -447,6 +448,8 @@ def run_scheduled_scan():
 
     # 1. First-Load / Empty History Fail-Safe
     if last_scan_val == "None":
+        if st.session_state.get("lock_init"): return
+        st.session_state["lock_init"] = True
         background_batch_scan()
         # Re-check connection after scan (quota sleep may have elapsed)
         if get_conn() is not None:
@@ -463,6 +466,8 @@ def run_scheduled_scan():
         if current_time_str >= window:
             window_scan_key = f"{current_date_str}_{window}"
             if last_scan_val != window_scan_key:
+                if st.session_state.get(f"lock_{window_scan_key}"): continue
+                st.session_state[f"lock_{window_scan_key}"] = True
                 background_batch_scan()
                 # Re-check connection before writing Metadata
                 if get_conn() is not None:

@@ -1358,6 +1358,8 @@ if search_query:
             resistance_val = df["Resistance_1"].iloc[-1]
             week52_high = df["High"].max()
             week52_low = df["Low"].min()
+            ideal_entry = support_val * 1.012  # 1.2% above S1 to confirm the bounce
+            ideal_stop = support_val * 0.98    # 2.0% below S1 to survive stop hunts
 
             st.divider()
             
@@ -1366,12 +1368,12 @@ if search_query:
             c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
             c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
             c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
-            c3.metric("Support (S1)", f"₹{support_val:,.2f}")
-            c4.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
-            c5.metric("52W High", f"₹{week52_high:,.2f}")
-            c6.metric("52W Low", f"₹{week52_low:,.2f}")
-            c7.metric("Entry Price (Sync)", f"₹{latest['Close']:,.2f}")
-            c8.metric("Stop Loss (Sync)", f"₹{support_val:,.2f}")
+            c3.metric("Ideal Entry (Bounce)", f"₹{ideal_entry:,.2f}")
+            c4.metric("Support (S1)", f"₹{support_val:,.2f}")
+            c5.metric("Auto Stop (Zone)", f"₹{ideal_stop:,.2f}")
+            c6.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
+            c7.metric("52W High", f"₹{week52_high:,.2f}")
+            c8.metric("52W Low", f"₹{week52_low:,.2f}")
 
             # --- Fundamental health ---
             vol_today_raw = latest.get("Volume", 1)

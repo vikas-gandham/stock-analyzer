@@ -892,32 +892,46 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def summarize_with_gemini(data_dict: dict, company: str, api_key: str) -> str:
-    """Send quantitative data to Gemini and return a 2-bullet technical summary."""
-    try:
-        from google import genai
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating):
+    bullets = []
+    
+    # 1. Risk/Reward (The Swing Trader's Holy Grail)
+    risk = price - support
+    reward = resistance - price
+    
+    if risk > 0 and reward > 0:
+        rr_ratio = reward / risk
+        if rr_ratio >= 2.0:
+            bullets.append(f"⚖️ **Risk/Reward Profile:** EXCELLENT. Downside risk to S1 is ₹{risk:.2f}, while upside potential to R1 is ₹{reward:.2f}. This offers a highly asymmetric **1:{rr_ratio:.1f} Reward-to-Risk ratio**.")
+        elif rr_ratio >= 1.0:
+            bullets.append(f"⚖️ **Risk/Reward Profile:** NEUTRAL. Upside potential (₹{reward:.2f}) roughly matches downside risk (₹{risk:.2f}). Ratio is **1:{rr_ratio:.1f}**.")
+        else:
+            bullets.append(f"⚠️ **Risk/Reward Profile:** POOR. Downside risk to support (₹{risk:.2f}) currently outweighs upside potential to resistance (₹{reward:.2f}). Chasing here is statistically dangerous.")
+    elif price <= support:
+        bullets.append(f"🚨 **Risk/Reward Profile:** AT OR BELOW SUPPORT. Immediate breakdown risk. Watch for strong rejection or further flush.")
+    else:
+        bullets.append(f"🚀 **Risk/Reward Profile:** BLUE SKY. Price has broken above known resistance (₹{resistance:.2f}). Trailing stops are mandatory here as upside is unmapped.")
 
-        client = genai.Client(api_key=api_key)
+    # 2. Volume & Momentum Confirmation
+    if vol_surge >= 1.5 and is_green:
+        bullets.append(f"🌊 **Momentum Confirmation:** STRONG ACCUMULATION. Trading at **{vol_surge:.1f}x** average volume on a positive close. The upward price action is mathematically validated by institutional money.")
+    elif vol_surge >= 1.5 and not is_green:
+        bullets.append(f"🩸 **Momentum Confirmation:** HEAVY DISTRIBUTION. High volume (**{vol_surge:.1f}x**) on a negative close indicates institutional selling. Expect severe downside pressure.")
+    elif vol_surge < 0.8:
+        bullets.append(f"🏜️ **Momentum Confirmation:** LOW PARTICIPATION. Trading at only **{vol_surge:.1f}x** normal volume. Any price movement today lacks strong conviction and is prone to reversal.")
+    else:
+        bullets.append(f"📊 **Momentum Confirmation:** AVERAGE. Volume is normal (**{vol_surge:.1f}x**). No extreme institutional footprints detected today.")
 
-        prompt = (
-            f"Act as a quantitative trading assistant. Analyze this data for {company}:\n"
-            f"{data_dict}\n"
-            "Provide a 2-bullet-point technical summary. "
-            "Bullet 1: Assess the entry risk and momentum. "
-            "Bullet 2: Highlight any fundamental or volume red/green flags. "
-            "Keep it extremely concise, objective, and strictly based on these numbers."
-        )
+    # 3. Macro Structure (Context)
+    if price >= (high_52w * 0.95):
+        bullets.append(f"🏔️ **Macro Structure:** BREAKOUT WATCH. Trading within 5% of its 52-Week High (₹{high_52w:.2f}). Watch closely for momentum continuation or a violent double-top rejection.")
+    elif risk > 0 and (risk / price) < 0.04: 
+        bullets.append(f"📉 **Macro Structure:** BASELINE REVERSION. Trading within 4% of structural support. This is a classic 'make or break' pivot level for a swing entry.")
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
-        return response.text
-    except Exception as e:
-        err_str = str(e).lower()
-        if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
-            return "⚠️ AI Summary currently unavailable: API Quota Exceeded."
-        return f"⚠️ Gemini API error: {e}"
+    # 4. Final Verdict
+    bullets.append(f"🎯 **Actionable Verdict:** The system's master algorithm categorizes this setup as a **{master_rating}**. Execute according to your predefined trade plan.")
+    
+    return "\n\n".join(bullets)
 
 
 def get_company_name(ticker: str) -> str:
@@ -1453,30 +1467,18 @@ if search_query:
             fig = build_chart(df, display_label)
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- AI Quantitative Summary Section ---
-            st.subheader("📊 AI Quantitative Summary")
-            saved_key = st.session_state.get("gemini_key")
-            if saved_key:
-                summary_key = f"ai_summary_{full_ticker}"
-                # Force refresh if ticker changed or summary missing
-                if summary_key not in st.session_state or st.session_state[summary_key] is None:
-                    if st.button("Generate AI Quantitative Summary"):
-                        with st.spinner("Generating..."):
-                            data_dict = {
-                                "Price": latest['Close'],
-                                "Support": support_val,
-                                "Master Score": f"{total_score}/8",
-                                "Condition": cond_label,
-                                "Volume Surge": f"{v_ratio_raw:.2f}x",
-                                "ROCE": f"{roce:.2f}%"
-                            }
-                            summary = summarize_with_gemini(data_dict, company_name, saved_key)
-                            st.session_state[summary_key] = summary
-                            st.rerun()
-                else:
-                    st.markdown(f'<div class="story-section">{st.session_state[summary_key]}</div>', unsafe_allow_html=True)
-            else:
-                st.info("Please enter a Gemini API Key in the settings below to enable AI summaries.")
+            # --- System Quantitative Report Section ---
+            st.subheader("📊 System Quantitative Report")
+            local_report = generate_swing_report(
+                price=latest['Close'], 
+                support=support_val, 
+                resistance=resistance_val, 
+                vol_surge=v_ratio_raw, 
+                is_green=is_green, 
+                high_52w=week52_high,
+                master_rating=master_rating
+            )
+            st.markdown(f'<div class="story-section">{local_report.replace("\n", "<br>")}</div>', unsafe_allow_html=True)
 
             st.divider()
             # --- 1% Risk Calculator (Decoupled & Synced) ---
@@ -1794,21 +1796,5 @@ except Exception as _scan_err:
     pass  # Non-blocking: scan failure must never kill the page
 
 st.divider()
-st.subheader("🤖 AI Settings")
-
-api_key = None
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    st.success("Gemini key loaded from secrets.")
-except (Exception):
-    api_key = st.text_input(
-        "Gemini API Key",
-        type="password",
-        value=st.session_state.get("gemini_key", ""),
-        help="Get a free key at aistudio.google.com",
-    )
-st.session_state["gemini_key"] = api_key
-
-st.divider()
-st.caption("Data sourced from Yahoo Finance. News via Google News. AI by Google Gemini. Built with Streamlit.")
+st.caption("Data sourced from Yahoo Finance. News via Google News. System Generated Technical Report. Built with Streamlit.")
 st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")

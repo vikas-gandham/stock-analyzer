@@ -1378,6 +1378,7 @@ if search_query:
             vol_20sma_raw = latest.get("Vol_20SMA", 1)
             if pd.isna(vol_20sma_raw) or vol_20sma_raw == 0: vol_20sma_raw = 1
             v_ratio_raw = vol_today_raw / vol_20sma_raw
+            vol_diff = vol_today_raw - vol_20sma_raw
             # Candle direction determines Accumulation vs Distribution label
             is_green = latest.get("Close", 0) >= latest.get("Open", 0)
 
@@ -1386,7 +1387,7 @@ if search_query:
             h1, h2, h3, h4, h5 = st.columns(5)
             h1.metric("ROCE (Efficiency)", f"{roce:.2f}%")
             h2.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
-            h3.metric("Current Volume", f"{int(vol_today_raw):,}")
+            h3.metric("Current Volume", f"{int(vol_today_raw):,}", delta=f"{vol_diff:,.0f} vs Avg")
             h4.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
             if v_ratio_raw >= 1.5 and is_green:
                 surge_label = "🔥 Inst. Accumulation"

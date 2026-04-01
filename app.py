@@ -315,12 +315,17 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
                 if col not in df.columns:
                     df[col] = None
             return df[columns]
-        except Exception:
+        except Exception as e:
             if attempt < 2:
                 time.sleep(2 ** attempt)
             else:
-                st.cache_resource.clear()
-                st.session_state["sheets_error"] = True
+                if "429" in str(e) or "RATE_LIMIT" in str(e):
+                    # Soft Error: 429 doesn't LOCK the UI
+                    st.toast("⚠️ Google API busy. Using cached data.")
+                else:
+                    # Hard Error: Authentication / Network failure LOCKS the UI
+                    st.cache_resource.clear()
+                    st.session_state["sheets_error"] = True
                 return pd.DataFrame(columns=columns)
     return pd.DataFrame(columns=columns)
 
@@ -349,10 +354,13 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             if attempt < 2:
                 time.sleep(2 ** attempt)
             else:
-                st.cache_resource.clear()
                 if "429" in str(e) or "RATE_LIMIT" in str(e):
-                    st.warning(f"⚠️ Google API Quota Exceeded for {worksheet}. The app will try again later.")
+                    # Soft Error: Don't LOCK the UI, don't clear the conn cache
+                    st.toast(f"⚠️ Sync delayed for {worksheet} due to API limits.")
                 else:
+                    # Hard Error: LOCK the UI and clear conn cache
+                    st.cache_resource.clear()
+                    st.session_state["sheets_error"] = True
                     st.error(f"⚠️ Failed to save to {worksheet}. Please check permissions.")
                 break
 

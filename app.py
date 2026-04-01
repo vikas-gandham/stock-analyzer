@@ -902,36 +902,43 @@ def generate_swing_report(price, support, resistance, vol_surge, is_green, high_
     if risk > 0 and reward > 0:
         rr_ratio = reward / risk
         if rr_ratio >= 2.0:
-            bullets.append(f"⚖️ **Risk/Reward Profile:** EXCELLENT. Downside risk to S1 is ₹{risk:.2f}, while upside potential to R1 is ₹{reward:.2f}. This offers a highly asymmetric **1:{rr_ratio:.1f} Reward-to-Risk ratio**.")
+            bullets.append({"type": "success", "msg": f"⚖️ **Risk/Reward Profile:** EXCELLENT. Downside risk to S1 is ₹{risk:.2f}, while upside potential to R1 is ₹{reward:.2f}. This offers a highly asymmetric **1:{rr_ratio:.1f} Reward-to-Risk ratio**."})
         elif rr_ratio >= 1.0:
-            bullets.append(f"⚖️ **Risk/Reward Profile:** NEUTRAL. Upside potential (₹{reward:.2f}) roughly matches downside risk (₹{risk:.2f}). Ratio is **1:{rr_ratio:.1f}**.")
+            bullets.append({"type": "warning", "msg": f"⚖️ **Risk/Reward Profile:** NEUTRAL. Upside potential (₹{reward:.2f}) roughly matches downside risk (₹{risk:.2f}). Ratio is **1:{rr_ratio:.1f}**."})
         else:
-            bullets.append(f"⚠️ **Risk/Reward Profile:** POOR. Downside risk to support (₹{risk:.2f}) currently outweighs upside potential to resistance (₹{reward:.2f}). Chasing here is statistically dangerous.")
+            bullets.append({"type": "error", "msg": f"⚠️ **Risk/Reward Profile:** POOR. Downside risk to support (₹{risk:.2f}) currently outweighs upside potential to resistance (₹{reward:.2f}). Chasing here is statistically dangerous."})
     elif price <= support:
-        bullets.append(f"🚨 **Risk/Reward Profile:** AT OR BELOW SUPPORT. Immediate breakdown risk. Watch for strong rejection or further flush.")
+        bullets.append({"type": "error", "msg": f"🚨 **Risk/Reward Profile:** AT OR BELOW SUPPORT. Immediate breakdown risk. Watch for strong rejection or further flush."})
     else:
-        bullets.append(f"🚀 **Risk/Reward Profile:** BLUE SKY. Price has broken above known resistance (₹{resistance:.2f}). Trailing stops are mandatory here as upside is unmapped.")
+        bullets.append({"type": "success", "msg": f"🚀 **Risk/Reward Profile:** BLUE SKY. Price has broken above known resistance (₹{resistance:.2f}). Trailing stops are mandatory here as upside is unmapped."})
 
     # 2. Volume & Momentum Confirmation
     if vol_surge >= 1.5 and is_green:
-        bullets.append(f"🌊 **Momentum Confirmation:** STRONG ACCUMULATION. Trading at **{vol_surge:.1f}x** average volume on a positive close. The upward price action is mathematically validated by institutional money.")
+        bullets.append({"type": "success", "msg": f"🌊 **Momentum Confirmation:** STRONG ACCUMULATION. Trading at **{vol_surge:.1f}x** average volume on a positive close. The upward price action is mathematically validated by institutional money."})
     elif vol_surge >= 1.5 and not is_green:
-        bullets.append(f"🩸 **Momentum Confirmation:** HEAVY DISTRIBUTION. High volume (**{vol_surge:.1f}x**) on a negative close indicates institutional selling. Expect severe downside pressure.")
+        bullets.append({"type": "error", "msg": f"🩸 **Momentum Confirmation:** HEAVY DISTRIBUTION. High volume (**{vol_surge:.1f}x**) on a negative close indicates institutional selling. Expect severe downside pressure."})
     elif vol_surge < 0.8:
-        bullets.append(f"🏜️ **Momentum Confirmation:** LOW PARTICIPATION. Trading at only **{vol_surge:.1f}x** normal volume. Any price movement today lacks strong conviction and is prone to reversal.")
+        bullets.append({"type": "warning", "msg": f"🏜️ **Momentum Confirmation:** LOW PARTICIPATION. Trading at only **{vol_surge:.1f}x** normal volume. Any price movement today lacks strong conviction and is prone to reversal."})
     else:
-        bullets.append(f"📊 **Momentum Confirmation:** AVERAGE. Volume is normal (**{vol_surge:.1f}x**). No extreme institutional footprints detected today.")
+        bullets.append({"type": "info", "msg": f"📊 **Momentum Confirmation:** AVERAGE. Volume is normal (**{vol_surge:.1f}x**). No extreme institutional footprints detected today."})
 
     # 3. Macro Structure (Context)
     if price >= (high_52w * 0.95):
-        bullets.append(f"🏔️ **Macro Structure:** BREAKOUT WATCH. Trading within 5% of its 52-Week High (₹{high_52w:.2f}). Watch closely for momentum continuation or a violent double-top rejection.")
+        bullets.append({"type": "success", "msg": f"🏔️ **Macro Structure:** BREAKOUT WATCH. Trading within 5% of its 52-Week High (₹{high_52w:.2f}). Watch closely for momentum continuation or a violent double-top rejection."})
     elif risk > 0 and (risk / price) < 0.04: 
-        bullets.append(f"📉 **Macro Structure:** BASELINE REVERSION. Trading within 4% of structural support. This is a classic 'make or break' pivot level for a swing entry.")
+        bullets.append({"type": "success", "msg": f"📉 **Macro Structure:** BASELINE REVERSION. Trading within 4% of structural support. This is a classic 'make or break' pivot level for a swing entry."})
+    else:
+        bullets.append({"type": "info", "msg": f"🧭 **Macro Structure:** MID-RANGE. Trading comfortably between major macro pivot levels. No immediate structural breakouts or breakdowns detected."})
 
     # 4. Final Verdict
-    bullets.append(f"🎯 **Actionable Verdict:** The system's master algorithm categorizes this setup as a **{master_rating}**. Execute according to your predefined trade plan.")
+    v_type = "info"
+    if "BUY" in master_rating: v_type = "success"
+    elif "HOLD" in master_rating: v_type = "warning"
+    elif "AVOID" in master_rating or "SELL" in master_rating: v_type = "error"
     
-    return "\n\n".join(bullets)
+    bullets.append({"type": v_type, "msg": f"🎯 **Actionable Verdict:** The system's master algorithm categorizes this setup as a **{master_rating}**. Execute according to your predefined trade plan."})
+    
+    return bullets
 
 
 def get_company_name(ticker: str) -> str:
@@ -1469,7 +1476,7 @@ if search_query:
 
             # --- System Quantitative Report Section ---
             st.subheader("📊 System Quantitative Report")
-            local_report = generate_swing_report(
+            alerts = generate_swing_report(
                 price=latest['Close'], 
                 support=support_val, 
                 resistance=resistance_val, 
@@ -1478,7 +1485,16 @@ if search_query:
                 high_52w=week52_high,
                 master_rating=master_rating
             )
-            st.markdown(f'<div class="story-section">{local_report.replace("\n", "<br>")}</div>', unsafe_allow_html=True)
+            
+            for alert in alerts:
+                if alert["type"] == "success":
+                    st.success(alert["msg"])
+                elif alert["type"] == "warning":
+                    st.warning(alert["msg"])
+                elif alert["type"] == "error":
+                    st.error(alert["msg"])
+                else:
+                    st.info(alert["msg"])
 
             st.divider()
             # --- 1% Risk Calculator (Decoupled & Synced) ---

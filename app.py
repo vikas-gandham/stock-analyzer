@@ -1005,6 +1005,23 @@ def fetch_fundamentals(ticker: str):
         return {"roce": 0.0, "debt_to_equity": 0.0}
 
 
+@st.cache_data(ttl=3600)
+def fetch_market_cap(ticker: str) -> str:
+    """Return market cap formatted in Indian Crores/Lakhs Crores."""
+    try:
+        mcap_raw = yf.Ticker(ticker).info.get("marketCap", 0)
+        if not mcap_raw or mcap_raw <= 0:
+            return "N/A"
+        mcap_cr = mcap_raw / 1e7  # 1 Cr = 10M
+        if mcap_cr >= 1_00_000:
+            return f"₹{mcap_cr / 1_00_000:.2f}L Cr"
+        elif mcap_cr >= 1_000:
+            return f"₹{mcap_cr:,.0f} Cr"
+        return f"₹{mcap_cr:.1f} Cr"
+    except Exception:
+        return "N/A"
+
+
 def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     """Calculate the 8-point Master Rating score."""
     if df.empty: return 0, 0, 0, 0, 0
@@ -1390,11 +1407,13 @@ if search_query:
 
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("##### 🏥 Fundamental & Volume Health")
-            h1, h2, h3, h4, h5 = st.columns(5)
-            h1.metric("ROCE (Efficiency)", f"{roce:.2f}%")
-            h2.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
-            h3.metric("Current Volume", f"{int(vol_today_raw):,}", delta=f"{vol_diff:,.0f} vs Avg")
-            h4.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
+            mcap_str = fetch_market_cap(full_ticker)
+            h1, h2, h3, h4, h5, h6 = st.columns(6)
+            h1.metric("Market Cap", mcap_str)
+            h2.metric("ROCE (Efficiency)", f"{roce:.2f}%")
+            h3.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
+            h4.metric("Current Volume", f"{int(vol_today_raw):,}", delta=f"{vol_diff:,.0f} vs Avg")
+            h5.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
             if v_ratio_raw >= 1.5 and is_green:
                 surge_label = "🔥 Inst. Accumulation"
                 surge_color = "normal"       # renders green ↑
@@ -1404,7 +1423,7 @@ if search_query:
             else:
                 surge_label = "Normal Volume"
                 surge_color = "off"          # neutral grey
-            h5.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
+            h6.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
 
             # --- Master Rating ---
             total_score, t_points, v_points, s_points, f_points = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
@@ -1431,16 +1450,16 @@ if search_query:
             action_col1, action_col2 = st.columns(2)
 
             with action_col1:
-                w_df_check = load_sheet_data("Watchlist", ["Ticker"])
+                w_df_check = load_sheet_data("Watchlist", ["Ticker", "Rating"])
                 if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
                     st.button("✅ In Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
                 else:
                     if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
-                        w_df_check = load_sheet_data("Watchlist", ["Ticker"])
+                        w_df_check = load_sheet_data("Watchlist", ["Ticker", "Rating"])
                         if clean_p not in w_df_check["Ticker"].values:
-                            new_row = pd.DataFrame([{"Ticker": clean_p}])
+                            new_row = pd.DataFrame([{"Ticker": clean_p, "Rating": master_rating}])
                             w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                            save_sheet_data("Watchlist", w_df_check, ["Ticker"])
+                            save_sheet_data("Watchlist", w_df_check, ["Ticker", "Rating"])
                             st.success(f"Added {clean_p} to Watchlist!")
                             st.rerun()
 
@@ -1695,11 +1714,11 @@ st.subheader("⭐ Watchlist")
 if st.session_state.get("sheets_error"):
     st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
 
-w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
+w_df = load_sheet_data("Watchlist", ["Ticker", "Signal", "Rating"])
 
 if not w_df.empty:
     # 9-column header ─ Ticker | Price | Rating | Condition | Signal | S1 Stop | T1 Target | Analyze | Del
-    wh_col = st.columns([2.5, 1, 0.8, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
+    wh_col = st.columns([2.5, 1, 1.5, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
     wh_col[0].markdown("**Ticker**")
     wh_col[1].markdown("**Price**")
     wh_col[2].markdown("**Rating**")
@@ -1754,10 +1773,11 @@ if not w_df.empty:
                     else:
                         w_t1_str, w_t1_color = "N/A", "#AAAAAA"
 
-                    wr_col = st.columns([2.5, 1, 0.8, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
+                    wr_col = st.columns([2.5, 1, 1.5, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
                     wr_col[0].write(clean_ticker)
                     wr_col[1].write(price_str)
-                    wr_col[2].write(f"{scr_w}/8")
+                    rating_val = str(row.get("Rating", "—") or f"{scr_w}/8")
+                    wr_col[2].write(rating_val)
                     wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
                     wr_col[4].write(str(row.get("Signal", "Neutral")))
                     wr_col[5].write(s1_str)
@@ -1766,10 +1786,10 @@ if not w_df.empty:
                         pass
                     if wr_col[8].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
                         w_df = w_df.drop(idx)
-                        save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
+                        save_sheet_data("Watchlist", w_df, ["Ticker", "Signal", "Rating"])
                         st.rerun()
                 else:
-                    wr_col = st.columns([2.5, 1, 0.8, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
+                    wr_col = st.columns([2.5, 1, 1.5, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
                     wr_col[0].write(f"⚠️ {clean_ticker}")
                     for i in range(1, 8): wr_col[i].write("N/A")
                     if wr_col[8].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):

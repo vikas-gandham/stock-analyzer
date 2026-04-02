@@ -1426,23 +1426,40 @@ if search_query:
             '''
             st.markdown(rating_html, unsafe_allow_html=True)
             
-            # --- Pin to Watchlist Button ---
-            w_col1, w_col2, w_col3 = st.columns([1, 1, 1])
-            with w_col2:
-                clean_p = sanitize_ticker(full_ticker)
-                w_df = load_sheet_data("Watchlist", ["Ticker"])
-                
-                if not w_df.empty and clean_p in w_df["Ticker"].values:
-                    st.button("✅ In Watchlist", disabled=True, use_container_width=True)
+            # --- Smart Action Buttons (Watchlist + Portfolio) ---
+            clean_p = sanitize_ticker(full_ticker)
+            action_col1, action_col2 = st.columns(2)
+
+            with action_col1:
+                w_df_check = load_sheet_data("Watchlist", ["Ticker"])
+                if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
+                    st.button("✅ In Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
                 else:
-                    if st.button("➕ Add to Watchlist", use_container_width=True):
-                        # Reload to ensure we have latest if added via other means
-                        w_df = load_sheet_data("Watchlist", ["Ticker"])
-                        if clean_p not in w_df["Ticker"].values:
+                    if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
+                        w_df_check = load_sheet_data("Watchlist", ["Ticker"])
+                        if clean_p not in w_df_check["Ticker"].values:
                             new_row = pd.DataFrame([{"Ticker": clean_p}])
-                            w_df = pd.concat([w_df, new_row], ignore_index=True)
-                            save_sheet_data("Watchlist", w_df, ["Ticker"])
+                            w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
+                            save_sheet_data("Watchlist", w_df_check, ["Ticker"])
                             st.success(f"Added {clean_p} to Watchlist!")
+                            st.rerun()
+
+            with action_col2:
+                p_df_check = load_sheet_data("Portfolio", ["Ticker"])
+                if not p_df_check.empty and clean_p in p_df_check["Ticker"].values:
+                    st.button("💼 In Portfolio", disabled=True, use_container_width=True, key="btn_p_dis")
+                else:
+                    if st.button("➕ Add to Portfolio", use_container_width=True, key="btn_p_add"):
+                        p_df_check = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
+                        if clean_p not in p_df_check["Ticker"].values:
+                            new_trade = pd.DataFrame([{
+                                "Ticker": clean_p,
+                                "Buy_Price": float(latest["Close"]),
+                                "Quantity": 1
+                            }])
+                            p_df_check = pd.concat([p_df_check, new_trade], ignore_index=True)
+                            save_sheet_data("Portfolio", p_df_check, ["Ticker", "Buy_Price", "Quantity"])
+                            st.success(f"Added {clean_p} to Portfolio at ₹{latest['Close']:,.2f}!")
                             st.rerun()
 
             # --- Visual Indicators (Gauge) ---
@@ -1577,26 +1594,6 @@ st.markdown("---")
 st.subheader("💼 Live Portfolio")
 if st.session_state["sheets_error"]:
     st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
-else:
-    with st.expander("➕ Add Existing Trade Manually"):
-        m_ticker = st.text_input("Ticker", placeholder="e.g. RELIANCE.NS", key="m_ticker_input")
-        m_price = st.number_input("Average Buy Price", min_value=0.0, step=1.0, key="m_price_input")
-        m_qty = st.number_input("Quantity", min_value=1, step=1, key="m_qty_input")
-        if st.button("Save to Portfolio"):
-            if m_ticker:
-                clean_t = sanitize_ticker(m_ticker)
-                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
-
-                if clean_t in p_df["Ticker"].values:
-                    p_df.loc[p_df["Ticker"] == clean_t, ["Buy_Price", "Quantity"]] = [m_price, m_qty]
-                    st.info(f"Updated {clean_t} in Portfolio.")
-                else:
-                    new_row = pd.DataFrame([{"Ticker": clean_t, "Buy_Price": m_price, "Quantity": m_qty, "Signal": "✅ HOLD"}])
-                    p_df = pd.concat([p_df, new_row], ignore_index=True)
-                    st.success(f"Added {clean_t} to Portfolio!")
-
-                save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
-                st.rerun()
 
 p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
 if not p_df.empty:
@@ -1689,31 +1686,16 @@ if not p_df.empty:
         except Exception:
             st.error(f"Error processing {clean_ticker}")
 else:
-    st.info("Portfolio is empty. Add trades manually or from the calculator.")
+    st.info("🔍 Portfolio is empty. Search for a ticker above, then click '➕ Add to Portfolio'.")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 
-# ── Watchlist (Full Width) ───────────────────────────────────────
-w_input = ""  # Defined here to prevent NameError
+# ── Watchlist (Full Width) ───────────────────────────────────
 st.subheader("⭐ Watchlist")
 if st.session_state.get("sheets_error"):
     st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
-else:
-    w_input = st.text_input("Add Ticker to Watchlist", placeholder="e.g. TCS (Press Enter)", key="w_ticker_input")
 
 w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
-if w_input:
-    clean_w = sanitize_ticker(w_input)
-    if clean_w not in w_df["Ticker"].values:
-        new_row = pd.DataFrame([{"Ticker": clean_w, "Signal": "Neutral"}])
-        w_df = pd.concat([w_df, new_row], ignore_index=True)
-        save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
-        st.success(f"Added {clean_w} to Watchlist!")
-    else:
-        st.info(f"{clean_w} is already in Watchlist.")
-
-    # Reset via rerun
-    st.rerun()
 
 if not w_df.empty:
     # 9-column header ─ Ticker | Price | Rating | Condition | Signal | S1 Stop | T1 Target | Analyze | Del
@@ -1797,7 +1779,7 @@ if not w_df.empty:
             except Exception:
                 st.error(f"Error processing {clean_ticker}")
 else:
-    st.info("Watchlist is empty. Search and pin stocks or add manually.")
+    st.info("🔍 Watchlist is empty. Search for a ticker above, then click '➕ Add to Watchlist'.")
 
 # ===================================================================
 # BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side Split)

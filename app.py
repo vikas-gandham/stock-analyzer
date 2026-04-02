@@ -387,7 +387,7 @@ def background_batch_scan():
 
     with st.spinner("🚀 Running Automated Market Scan..."):
         # 1. Portfolio Scan
-        p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity", "Signal"])
+        p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity", "Signal", "Rating"])
         if not p_df.empty:
             for idx, row in p_df.iterrows():
                 try:
@@ -395,17 +395,35 @@ def background_batch_scan():
                     df = fetch_ohlcv(ticker)
                     if not df.empty:
                         df = compute_indicators(df)
+                        funda = fetch_fundamentals(ticker)
+                        score, _, _, _, _ = calculate_master_score(df, funda)
                         current_price = df["Close"].iloc[-1]
                         s1 = df["Support_1"].iloc[-1]
+
+                        # Signal: price-based urgency
                         if current_price < s1:
                             p_df.at[idx, "Signal"] = "🚨 URGENT SELL"
                         else:
                             p_df.at[idx, "Signal"] = "✅ HOLD"
+
+                        # Rating: text-based master verdict
+                        if score >= 7:
+                            p_rating = "STRONG BUY (Techno-Funda)"
+                        elif score >= 5:
+                            p_rating = "MODERATE BUY"
+                        elif score >= 3:
+                            p_rating = "WATCHLIST / HOLD"
+                        else:
+                            p_rating = "AVOID"
+                        p_df.at[idx, "Rating"] = p_rating
                 except: pass
-            save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
+
+            # Clean up any nan signals before saving
+            p_df["Signal"] = p_df["Signal"].fillna("✅ HOLD").replace("nan", "✅ HOLD")
+            save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal", "Rating"])
 
         # 2. Watchlist Scan
-        w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
+        w_df = load_sheet_data("Watchlist", ["Ticker", "Signal", "Rating"])
         if not w_df.empty:
             for idx, row in w_df.iterrows():
                 try:
@@ -413,14 +431,32 @@ def background_batch_scan():
                     df = fetch_ohlcv(ticker)
                     if not df.empty:
                         df = compute_indicators(df)
+                        funda = fetch_fundamentals(ticker)
+                        score, _, _, _, _ = calculate_master_score(df, funda)
                         label, color, _ = get_market_condition(df)
+
+                        # Signal: market condition-based alert
                         if "SAFE" in label:
                             w_df.at[idx, "Signal"] = "🔥 BUY NOW"
                             st.toast(f"🚨 Alert: {ticker} is in the Buy Zone!")
                         else:
                             w_df.at[idx, "Signal"] = "Neutral"
+
+                        # Rating: text-based master verdict
+                        if score >= 7:
+                            w_rating = "STRONG BUY (Techno-Funda)"
+                        elif score >= 5:
+                            w_rating = "MODERATE BUY"
+                        elif score >= 3:
+                            w_rating = "WATCHLIST / HOLD"
+                        else:
+                            w_rating = "AVOID"
+                        w_df.at[idx, "Rating"] = w_rating
                 except: pass
-            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal"])
+
+            # Clean up any nan signals before saving
+            w_df["Signal"] = w_df["Signal"].fillna("Neutral").replace("nan", "Neutral")
+            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal", "Rating"])
 
         # 3. Log to ScanHistory — only when connection is confirmed active
         if get_conn() is not None:
@@ -429,7 +465,7 @@ def background_batch_scan():
                     len(p_df[p_df["Signal"] == "🚨 URGENT SELL"])
                     + len(w_df[w_df["Signal"] == "🔥 BUY NOW"])
                 )
-                now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                now_ts = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
                 h_df = load_sheet_data("ScanHistory", ["Window", "Timestamp", "SignalCount"])
                 new_log = pd.DataFrame([{"Window": "Auto/Manual", "Timestamp": now_ts, "SignalCount": sig_count}])
                 h_df = pd.concat([h_df, new_log], ignore_index=True)

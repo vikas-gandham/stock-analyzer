@@ -7,6 +7,7 @@ Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
 import io
 import math
 import time
+import pytz
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -21,6 +22,9 @@ from datetime import datetime
 from gnews import GNews
 from plotly.subplots import make_subplots
 from streamlit_gsheets import GSheetsConnection
+
+# Global Timezone — all timestamps forced to IST
+IST = pytz.timezone('Asia/Kolkata')
 
 # ---------------------------------------------------------------------------
 # Page configuration — MUST be the very first Streamlit command
@@ -444,7 +448,7 @@ def run_scheduled_scan():
     if st.session_state.get("sheets_error") or active_conn is None:
         return
 
-    now = datetime.now()
+    now = datetime.now(IST)
     current_time_str = now.strftime("%H:%M")
     current_date_str = now.strftime("%Y-%m-%d")
 
@@ -461,7 +465,7 @@ def run_scheduled_scan():
         background_batch_scan()
         # Re-check connection after scan (quota sleep may have elapsed)
         if get_conn() is not None:
-            sync_now = datetime.now().strftime("%I:%M %p")
+            sync_now = datetime.now(IST).strftime("%I:%M %p IST")
             new_meta = pd.DataFrame([
                 {"Key": "last_scan_time", "Value": f"{current_date_str}_INIT"},
                 {"Key": "last_sync_actual", "Value": sync_now},
@@ -479,7 +483,7 @@ def run_scheduled_scan():
                 background_batch_scan()
                 # Re-check connection before writing Metadata
                 if get_conn() is not None:
-                    sync_now = datetime.now().strftime("%I:%M %p")
+                    sync_now = datetime.now(IST).strftime("%I:%M %p IST")
                     new_meta = pd.DataFrame([
                         {"Key": "last_scan_time", "Value": window_scan_key},
                         {"Key": "last_sync_actual", "Value": sync_now},
@@ -517,7 +521,7 @@ def render_status_hub():
     nifty_price, nifty_pct = fetch_nifty_baseline()
 
     # Defaults
-    now = datetime.now()
+    now = datetime.now(IST)
     is_weekend = now.weekday() in [5, 6]
     window_label = (
         "📡 Initializing System..."
@@ -626,7 +630,7 @@ def render_status_hub():
             with st.spinner("🚀 Stabilizing Connection..."):
                 time.sleep(1)          # Safety delay — lets prior writes settle
             background_batch_scan()
-            sync_now = datetime.now().strftime("%I:%M %p")
+            sync_now = datetime.now(IST).strftime("%I:%M %p IST")
             new_meta = pd.DataFrame([
                 {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
                 {"Key": "last_sync_actual", "Value": sync_now},

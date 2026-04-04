@@ -1680,9 +1680,9 @@ if st.session_state["sheets_error"]:
 
 p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
 if not p_df.empty:
-    # 10-column header ─ Ticker | P&L | Vol Footprint | RSI | T1 | Trail Stop | % to Stop | Verdict | Analyze | Delete
-    P_COL_LAYOUT = [1.5, 1, 2, 1.5, 1.5, 1.5, 1.5, 2, 1, 1]
-    HEADERS = ["Ticker", "P&L %", "Vol Footprint", "RSI", "T1 (Book 50%)", "Trail Stop", "% to Stop", "Verdict", "Analyze", "Delete"]
+    # 10-column header ─ Ticker | Price | RSI | T1 | Trail Stop | % to Stop | Vol Footprint | Verdict | Analyze | Delete
+    P_COL_LAYOUT = [1.5, 1.2, 1.0, 1.5, 1.5, 1.2, 2.0, 2.0, 1.0, 1.0]
+    HEADERS = ["Ticker", "Price", "RSI", "T1 (Book 50%)", "Trail Stop", "% to Stop", "Vol Footprint", "Verdict", "Analyze", "Delete"]
     h_col = st.columns(P_COL_LAYOUT)
     for col, header in zip(h_col, HEADERS):
         col.markdown(f"**{header}**")
@@ -1774,15 +1774,14 @@ if not p_df.empty:
                 verdict_html = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
 
                 # ── Row Render ───────────────────────────────────────────────
-                pnl_color = "#00D4AA" if pnl >= 0 else "#FF4B4B"
                 r_col = st.columns(P_COL_LAYOUT)
                 r_col[0].write(clean_ticker)
-                r_col[1].markdown(f"<span style='color:{pnl_color}; font-weight:bold;'>{pnl:+.2f}%</span>", unsafe_allow_html=True)
-                r_col[2].write(vol_foot)
-                r_col[3].markdown(rsi_html, unsafe_allow_html=True)
-                r_col[4].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>{t1_str}</span>", unsafe_allow_html=True)
-                r_col[5].write(trail_str)
-                r_col[6].markdown(pct_html, unsafe_allow_html=True)
+                r_col[1].write(f"₹{cmp:,.2f}")
+                r_col[2].markdown(rsi_html, unsafe_allow_html=True)
+                r_col[3].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>{t1_str}</span>", unsafe_allow_html=True)
+                r_col[4].write(trail_str)
+                r_col[5].markdown(pct_html, unsafe_allow_html=True)
+                r_col[6].write(vol_foot)
                 r_col[7].markdown(verdict_html, unsafe_allow_html=True)
                 if r_col[8].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                     pass
@@ -1791,10 +1790,10 @@ if not p_df.empty:
                     save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
                     st.rerun()
             else:
-                r_col = st.columns(P_COL_LAYOUT)
+                r_col = st.columns([1.5, 1.2, 1.0, 1.5, 1.5, 1.2, 2.0, 2.0, 1.0, 1.0])
                 r_col[0].write(f"⚠️ {clean_ticker}")
                 for i in range(1, 8): r_col[i].write("N/A")
-                r_col[8].write("")
+                r_col[8].write("")  # Empty space for Analyze
                 if r_col[9].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
                     save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])

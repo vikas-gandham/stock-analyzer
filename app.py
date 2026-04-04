@@ -1484,7 +1484,7 @@ if search_query:
             WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
             w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
             if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
-                st.button("✅ In Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
+                st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
             else:
                 if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
                     w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
@@ -1604,14 +1604,15 @@ if search_query:
                         
                         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                         
-                        if st.button("💼 Add to Portfolio", use_container_width=True):
-                            clean_p = sanitize_ticker(full_ticker)
-                            p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
-                            p_df = load_sheet_data("Portfolio", p_schema)
-                            if clean_p in p_df["Ticker"].values:
-                                p_df.loc[p_df["Ticker"] == clean_p, ["Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity"]] = [entry_price, stop_loss, stop_loss, shares_to_buy]
-                                st.info(f"Updated {clean_p} in Portfolio.")
-                            else:
+                        clean_p = sanitize_ticker(full_ticker)
+                        p_df_check = load_sheet_data("Portfolio", ["Ticker"])
+                        
+                        if not p_df_check.empty and clean_p in p_df_check["Ticker"].values:
+                            st.button("💼 Active in Portfolio", disabled=True, use_container_width=True)
+                            st.caption("⚠️ To adjust this position, delete it from the Live Portfolio table first.")
+                        else:
+                            if st.button("💼 Add to Portfolio", use_container_width=True):
+                                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"])
                                 new_trade = pd.DataFrame([{
                                     "Ticker": clean_p,
                                     "Buy_Price": entry_price,
@@ -1621,10 +1622,9 @@ if search_query:
                                     "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
                                 }])
                                 p_df = pd.concat([p_df, new_trade], ignore_index=True)
+                                save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"])
                                 st.success(f"Added {clean_p} to Portfolio!")
-                            
-                            save_sheet_data("Portfolio", p_df, p_schema)
-                            st.rerun()
+                                st.rerun()
                             
                         if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
                 else: st.error("Entry Price must be greater than Stop-Loss Price.")

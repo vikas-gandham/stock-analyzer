@@ -1851,8 +1851,8 @@ if not w_df.empty:
 
     if display_rows:
         # ── 8-column layout: data + inline Analyze / Delete buttons ────────
-        COL_LAYOUT = [2, 1.5, 2, 2, 1.5, 1.5, 1, 1]
-        HEADERS = ["Ticker", "Price", "Rating", "Entry Context", "Trend", "Stop Loss", "Analyze", "Delete"]
+        COL_LAYOUT = [2, 1.5, 1.5, 2, 1.5, 2, 1, 1]
+        HEADERS = ["Ticker", "Price", "Stop Loss", "Entry Context", "Trend", "Rating", "Analyze", "Delete"]
 
         # Header row
         h_cols = st.columns(COL_LAYOUT)
@@ -1860,8 +1860,9 @@ if not w_df.empty:
             col.markdown(f"**{header}**")
         st.markdown("---")
 
-        # Data rows — Rating colored inline, buttons in same row
+        # Data rows — all key columns HTML color-coded, buttons inline
         for dr in display_rows:
+            # Rating color
             rating_str = str(dr.get("Rating", "")).upper()
             if "BUY" in rating_str:
                 r_color = "#00d26a"
@@ -1871,13 +1872,33 @@ if not w_df.empty:
                 r_color = "#f7556a"
             rating_html = f"<span style='color:{r_color}; font-weight:bold;'>{dr['Rating']}</span>"
 
+            # Entry Context color
+            ctx_str = str(dr.get("Entry Context", "")).upper()
+            if "SAFE" in ctx_str:
+                ctx_color = "#00d26a"
+            elif "FAIR" in ctx_str:
+                ctx_color = "#fbd63f"
+            else:
+                ctx_color = "#f7556a"  # OVEREXTENDED / OVERBOUGHT / N/A
+            ctx_html = f"<span style='color:{ctx_color}; font-weight:bold;'>{ctx_str}</span>"
+
+            # Trend Strength color
+            trend_str = str(dr.get("Trend", dr.get("Trend Strength", ""))).upper()
+            if "2/2" in trend_str or "BULL" in trend_str:
+                trend_color = "#00d26a"
+            elif "1/2" in trend_str:
+                trend_color = "#fbd63f"
+            else:
+                trend_color = "#f7556a"  # 0/2 or Bearish
+            trend_html = f"<span style='color:{trend_color}; font-weight:bold;'>{trend_str}</span>"
+
             r_cols = st.columns(COL_LAYOUT)
             r_cols[0].write(dr["Ticker"])
             r_cols[1].write(dr["Price"])
-            r_cols[2].markdown(rating_html, unsafe_allow_html=True)
-            r_cols[3].write(dr["Entry Context"])
-            r_cols[4].write(dr["Trend"])
-            r_cols[5].write(dr["Stop Loss"])
+            r_cols[2].write(dr["Stop Loss"])
+            r_cols[3].markdown(ctx_html, unsafe_allow_html=True)
+            r_cols[4].markdown(trend_html, unsafe_allow_html=True)
+            r_cols[5].markdown(rating_html, unsafe_allow_html=True)
             if r_cols[6].button("Analyze", key=f"ana_w_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
             if r_cols[7].button("🗑️", key=f"del_w_{dr['_ticker']}_{dr['_idx']}"):

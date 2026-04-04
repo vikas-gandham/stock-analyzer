@@ -1680,17 +1680,13 @@ if st.session_state["sheets_error"]:
 
 p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
 if not p_df.empty:
-    # 9-column header ─ Ticker | P&L | Status | Master | T1 Scale-Out | Trail Stop | Signal | Action | Del
-    h_col = st.columns([2.5, 1, 1.2, 1, 1.5, 1.5, 1.2, 1.2, 0.5])
-    h_col[0].markdown("**Ticker**")
-    h_col[1].markdown("**P&L %**")
-    h_col[2].markdown("**Status**")
-    h_col[3].markdown("**Master**")
-    h_col[4].markdown("**🎯 T1 (Book 50%)**")
-    h_col[5].markdown("**🛡️ Trail Stop**")
-    h_col[6].markdown("**Signal**")
-    h_col[7].markdown("**Action**")
-    h_col[8].markdown("**Del**")
+    # 10-column header ─ Ticker | P&L | Vol Footprint | RSI | T1 | Trail Stop | % to Stop | Verdict | Analyze | Delete
+    P_COL_LAYOUT = [1.5, 1, 2, 1.5, 1.5, 1.5, 1.5, 2, 1, 1]
+    HEADERS = ["Ticker", "P&L %", "Vol Footprint", "RSI", "T1 (Book 50%)", "Trail Stop", "% to Stop", "Verdict", "Analyze", "Delete"]
+    h_col = st.columns(P_COL_LAYOUT)
+    for col, header in zip(h_col, HEADERS):
+        col.markdown(f"**{header}**")
+    st.markdown("---")
 
     for idx, row in p_df.iterrows():
         ticker = row["Ticker"]
@@ -1701,7 +1697,7 @@ if not p_df.empty:
         try:
             p_data = fetch_ohlcv(clean_ticker)
 
-            # Force Sync / Smart Search Fallback
+            # Smart Search Fallback
             if p_data.empty:
                 try:
                     search_res = yf.Search(clean_ticker, max_results=1).quotes
@@ -1709,7 +1705,8 @@ if not p_df.empty:
                         new_sym = search_res[0]['symbol']
                         p_data = fetch_ohlcv(new_sym)
                         clean_ticker = new_sym
-                except Exception: pass
+                except Exception:
+                    pass
 
             if not p_data.empty:
                 p_data = compute_indicators(p_data)
@@ -1719,50 +1716,86 @@ if not p_df.empty:
                 s1 = p_data["Support_1"].iloc[-1]
                 pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
 
-                # ── Exit Status (Trailing Stop = dynamic S1) ──────────────────
-                if cmp < s1:
-                    status, color = "🚨 SELL — Below Trail Stop", "#FF4B4B"
-                elif score < 4:
-                    status, color = "⚠️ WEAK (Watch)", "#FFD700"
+                # ── RSI ─────────────────────────────────────────────────────
+                rsi_vals = ta.rsi(p_data['Close'], length=14)
+                rsi = rsi_vals.iloc[-1] if not rsi_vals.empty and not pd.isna(rsi_vals.iloc[-1]) else 50
+                rsi_str = f"{rsi:.1f}"
+                if rsi >= 70:
+                    rsi_html = f"<span style='color:#FF4B4B; font-weight:bold;'>{rsi_str} (OB)</span>"
+                elif rsi <= 30:
+                    rsi_html = f"<span style='color:#00D4AA; font-weight:bold;'>{rsi_str} (OS)</span>"
                 else:
-                    status, color = "✅ HOLD — Trend Active", "#00D4AA"
+                    rsi_html = f"<span style='color:#AAAAAA;'>{rsi_str}</span>"
 
-                # ── T1: 1:3 R:R Scale-Out Target ───────────────────────────
-                # Risk = entry − initial stop (S1 at time of buy = current S1 proxy).
-                # We use current S1 as the trailing stop, so T1 is still a useful
-                # forward reference even as the stock moves.
+                # ── Volume Footprint ─────────────────────────────────────────
+                vol_today = p_data["Volume"].iloc[-1]
+                vol_20sma_raw = p_data["Vol_20SMA"].iloc[-1]
+                vol_20sma = vol_20sma_raw if not pd.isna(vol_20sma_raw) and vol_20sma_raw > 0 else 1
+                v_ratio = vol_today / vol_20sma
+                is_green = cmp >= p_data["Open"].iloc[-1]
+                if v_ratio >= 1.5 and is_green:
+                    vol_foot = "🟢 Accumulation"
+                elif v_ratio >= 1.5 and not is_green:
+                    vol_foot = "🔴 DISTRIBUTION"
+                else:
+                    vol_foot = "⚪ Normal"
+
+                # ── T1: 1:3 R:R Scale-Out Target ────────────────────────────
                 p_risk = buy_price - s1
                 if p_risk > 0:
                     p_t1 = buy_price + (p_risk * 3)
                     t1_str = f"₹{p_t1:,.2f}"
-                    # Colour T1 green if already hit, grey otherwise
                     t1_color = "#00D4AA" if cmp >= p_t1 else "#AAAAAA"
                 else:
                     t1_str, t1_color = "N/A", "#AAAAAA"
 
-                # ── Trailing Stop = live dynamic S1 ────────────────────────
+                # ── Trail Stop = live dynamic S1 ─────────────────────────────
                 trail_str = f"₹{s1:,.2f}"
 
-                r_col = st.columns([2.5, 1, 1.2, 1, 1.5, 1.5, 1.2, 1.2, 0.5])
+                # ── % to Stop ────────────────────────────────────────────────
+                pct_to_stop = ((cmp - s1) / cmp) * 100 if cmp > 0 else 0
+                if pct_to_stop < 2.0:
+                    pct_color = "#FF4B4B"
+                elif pct_to_stop < 5.0:
+                    pct_color = "#FFD700"
+                else:
+                    pct_color = "#00D4AA"
+                pct_html = f"<span style='color:{pct_color}; font-weight:bold;'>{pct_to_stop:.1f}%</span>"
+
+                # ── Verdict ──────────────────────────────────────────────────
+                if cmp < s1:
+                    verdict, v_color = "🔴 SELL (Stop Hit)", "#FF4B4B"
+                elif v_ratio >= 1.5 and not is_green and rsi > 65:
+                    verdict, v_color = "🔴 SELL (Exhaustion)", "#FF4B4B"
+                elif score < 4:
+                    verdict, v_color = "🟡 TRIM (Weakening)", "#FFD700"
+                else:
+                    verdict, v_color = "🟢 HOLD", "#00D4AA"
+                verdict_html = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
+
+                # ── Row Render ───────────────────────────────────────────────
+                pnl_color = "#00D4AA" if pnl >= 0 else "#FF4B4B"
+                r_col = st.columns(P_COL_LAYOUT)
                 r_col[0].write(clean_ticker)
-                r_col[1].write(f"{pnl:+.2f}%")
-                r_col[2].markdown(f"<span style='color:{color}; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
-                r_col[3].write(f"{score}/8")
+                r_col[1].markdown(f"<span style='color:{pnl_color}; font-weight:bold;'>{pnl:+.2f}%</span>", unsafe_allow_html=True)
+                r_col[2].write(vol_foot)
+                r_col[3].markdown(rsi_html, unsafe_allow_html=True)
                 r_col[4].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>{t1_str}</span>", unsafe_allow_html=True)
                 r_col[5].write(trail_str)
-                r_col[6].write(str(row.get("Signal", "✅ HOLD")))
-                if r_col[7].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
+                r_col[6].markdown(pct_html, unsafe_allow_html=True)
+                r_col[7].markdown(verdict_html, unsafe_allow_html=True)
+                if r_col[8].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
                     pass
-                if r_col[8].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
+                if r_col[9].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
                     save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
                     st.rerun()
             else:
-                r_col = st.columns([2.5, 1, 1.5, 1, 1.5, 1.5, 1.2, 1.2, 0.5])
+                r_col = st.columns(P_COL_LAYOUT)
                 r_col[0].write(f"⚠️ {clean_ticker}")
-                for i in range(1, 7): r_col[i].write("N/A")
-                r_col[7].write("")
-                if r_col[8].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
+                for i in range(1, 8): r_col[i].write("N/A")
+                r_col[8].write("")
+                if r_col[9].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
                     save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
                     st.rerun()

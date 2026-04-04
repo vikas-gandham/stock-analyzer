@@ -224,7 +224,7 @@ def ensure_worksheets_exist(conn):
         try:
             conn.read(worksheet="Portfolio", ttl=0)
         except Exception:
-            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Quantity", "Signal"]))
+            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]))
 
         # 3. Metadata (Tracking Scans)
         try:
@@ -387,7 +387,8 @@ def background_batch_scan():
 
     with st.spinner("🚀 Running Automated Market Scan..."):
         # 1. Portfolio Scan
-        p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity", "Signal", "Rating"])
+        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
+        p_df = load_sheet_data("Portfolio", p_schema)
         if not p_df.empty:
             for idx, row in p_df.iterrows():
                 try:
@@ -395,32 +396,14 @@ def background_batch_scan():
                     df = fetch_ohlcv(ticker)
                     if not df.empty:
                         df = compute_indicators(df)
-                        funda = fetch_fundamentals(ticker)
-                        score, _, _, _, _ = calculate_master_score(df, funda)
-                        current_price = df["Close"].iloc[-1]
                         s1 = df["Support_1"].iloc[-1]
-
-                        # Signal: price-based urgency
-                        if current_price < s1:
-                            p_df.at[idx, "Signal"] = "🚨 URGENT SELL"
-                        else:
-                            p_df.at[idx, "Signal"] = "✅ HOLD"
-
-                        # Rating: clean text-based master verdict (no emojis)
-                        if score >= 7:
-                            p_rating = "STRONG BUY"
-                        elif score >= 5:
-                            p_rating = "MODERATE BUY"
-                        elif score >= 3:
-                            p_rating = "WATCHLIST / HOLD"
-                        else:
-                            p_rating = "AVOID"
-                        p_df.at[idx, "Rating"] = p_rating
+                        
+                        high_trail = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
+                        if not pd.isna(high_trail) and not pd.isna(s1):
+                            p_df.at[idx, "Highest_Trail"] = max(float(s1), high_trail)
                 except: pass
 
-            # Clean up any nan signals before saving
-            p_df["Signal"] = p_df["Signal"].fillna("✅ HOLD").replace("nan", "✅ HOLD")
-            save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal", "Rating"])
+            save_sheet_data("Portfolio", p_df, p_schema)
 
         # 2. Watchlist Scan
         w_df = load_sheet_data("Watchlist", ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"])
@@ -1528,22 +1511,31 @@ if search_query:
                             st.rerun()
 
             with action_col2:
-                p_df_check = load_sheet_data("Portfolio", ["Ticker"])
+                p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
+                p_df_check = load_sheet_data("Portfolio", p_schema)
                 if not p_df_check.empty and clean_p in p_df_check["Ticker"].values:
                     st.button("💼 In Portfolio", disabled=True, use_container_width=True, key="btn_p_dis")
                 else:
-                    if st.button("➕ Add to Portfolio", use_container_width=True, key="btn_p_add"):
-                        p_df_check = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
-                        if clean_p not in p_df_check["Ticker"].values:
-                            new_trade = pd.DataFrame([{
-                                "Ticker": clean_p,
-                                "Buy_Price": float(latest["Close"]),
-                                "Quantity": 1
-                            }])
-                            p_df_check = pd.concat([p_df_check, new_trade], ignore_index=True)
-                            save_sheet_data("Portfolio", p_df_check, ["Ticker", "Buy_Price", "Quantity"])
-                            st.success(f"Added {clean_p} to Portfolio at ₹{latest['Close']:,.2f}!")
-                            st.rerun()
+                    with st.expander("➕ Add Existing Trade Manually"):
+                        st.markdown(f"**Add {clean_p} to Portfolio**")
+                        m_buy = st.number_input("Buy Price (₹)", min_value=0.01, value=float(latest["Close"]), step=0.5, key="m_buy_qty")
+                        m_stop = st.number_input("Initial Stop (₹)", min_value=0.01, value=float(support_val), step=0.5, key="m_stop_qty")
+                        m_qty = st.number_input("Quantity", min_value=1, value=1, step=1, key="m_qty_qty")
+                        if st.button("Submit Trade", use_container_width=True, key="btn_p_submit"):
+                            p_df_full = load_sheet_data("Portfolio", p_schema)
+                            if clean_p not in p_df_full["Ticker"].values:
+                                new_trade = pd.DataFrame([{
+                                    "Ticker": clean_p,
+                                    "Buy_Price": m_buy,
+                                    "Initial_Stop": m_stop,
+                                    "Highest_Trail": m_stop,
+                                    "Quantity": m_qty,
+                                    "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
+                                }])
+                                p_df_full = pd.concat([p_df_full, new_trade], ignore_index=True)
+                                save_sheet_data("Portfolio", p_df_full, p_schema)
+                                st.success(f"Added {clean_p} to Portfolio!")
+                                st.rerun()
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -1644,20 +1636,24 @@ if search_query:
                         
                         if st.button("💼 Add to Portfolio", type="primary", use_container_width=True):
                             clean_p = sanitize_ticker(full_ticker)
-                            p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
+                            p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
+                            p_df = load_sheet_data("Portfolio", p_schema)
                             if clean_p in p_df["Ticker"].values:
-                                p_df.loc[p_df["Ticker"] == clean_p, ["Buy_Price", "Quantity"]] = [entry_price, shares_to_buy]
+                                p_df.loc[p_df["Ticker"] == clean_p, ["Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity"]] = [entry_price, stop_loss, stop_loss, shares_to_buy]
                                 st.info(f"Updated {clean_p} in Portfolio.")
                             else:
                                 new_trade = pd.DataFrame([{
                                     "Ticker": clean_p,
                                     "Buy_Price": entry_price,
-                                    "Quantity": shares_to_buy
+                                    "Initial_Stop": stop_loss,
+                                    "Highest_Trail": stop_loss,
+                                    "Quantity": shares_to_buy,
+                                    "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
                                 }])
                                 p_df = pd.concat([p_df, new_trade], ignore_index=True)
                                 st.success(f"Added {clean_p} to Portfolio!")
                             
-                            save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                            save_sheet_data("Portfolio", p_df, p_schema)
                             st.rerun()
                             
                         if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
@@ -1678,7 +1674,8 @@ st.subheader("💼 Live Portfolio")
 if st.session_state["sheets_error"]:
     st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
 
-p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Quantity"])
+p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
+p_df = load_sheet_data("Portfolio", p_schema)
 if not p_df.empty:
     # 10-column header ─ Ticker | Price | RSI | T1 | Trail Stop | % to Stop | Vol Footprint | Verdict | Analyze | Delete
     P_COL_LAYOUT = [1.5, 1.2, 1.0, 1.5, 1.5, 1.2, 2.0, 2.0, 1.0, 1.0]
@@ -1692,7 +1689,9 @@ if not p_df.empty:
         ticker = row["Ticker"]
         if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
         clean_ticker = sanitize_ticker(ticker)
-        buy_price = row["Buy_Price"]
+        buy_price = float(row.get("Buy_Price", 0))
+        init_stop = float(row.get("Initial_Stop", buy_price * 0.9)) # fallback
+        high_trail = float(row.get("Highest_Trail", init_stop))
 
         try:
             p_data = fetch_ohlcv(clean_ticker)
@@ -1713,7 +1712,6 @@ if not p_df.empty:
                 funda = fetch_fundamentals(clean_ticker)
                 score, _, _, _, _ = calculate_master_score(p_data, funda)
                 cmp = p_data["Close"].iloc[-1]
-                s1 = p_data["Support_1"].iloc[-1]
                 pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
 
                 # ── RSI ─────────────────────────────────────────────────────
@@ -1740,8 +1738,12 @@ if not p_df.empty:
                 else:
                     vol_foot = "⚪ Normal"
 
+                # ── Ratchet Logic ────────────────────────────────────────────
+                live_s1 = p_data["Support_1"].iloc[-1]
+                current_trail = max(float(live_s1), high_trail)
+                
                 # ── T1: 1:3 R:R Scale-Out Target ────────────────────────────
-                p_risk = buy_price - s1
+                p_risk = buy_price - init_stop
                 if p_risk > 0:
                     p_t1 = buy_price + (p_risk * 3)
                     t1_str = f"₹{p_t1:,.2f}"
@@ -1749,11 +1751,11 @@ if not p_df.empty:
                 else:
                     t1_str, t1_color = "N/A", "#AAAAAA"
 
-                # ── Trail Stop = live dynamic S1 ─────────────────────────────
-                trail_str = f"₹{s1:,.2f}"
+                # ── Trail Stop = Ratcheted S1 ───────────────────────────────
+                trail_str = f"₹{current_trail:,.2f}"
 
                 # ── % to Stop ────────────────────────────────────────────────
-                pct_to_stop = ((cmp - s1) / cmp) * 100 if cmp > 0 else 0
+                pct_to_stop = ((cmp - current_trail) / cmp) * 100 if cmp > 0 else 0
                 if pct_to_stop < 2.0:
                     pct_color = "#FF4B4B"
                 elif pct_to_stop < 5.0:
@@ -1763,7 +1765,7 @@ if not p_df.empty:
                 pct_html = f"<span style='color:{pct_color}; font-weight:bold;'>{pct_to_stop:.1f}%</span>"
 
                 # ── Verdict ──────────────────────────────────────────────────
-                if cmp < s1:
+                if cmp < current_trail:
                     verdict, v_color = "🔴 SELL (Stop Hit)", "#FF4B4B"
                 elif v_ratio >= 1.5 and not is_green and rsi > 65:
                     verdict, v_color = "🔴 SELL (Exhaustion)", "#FF4B4B"
@@ -1787,7 +1789,7 @@ if not p_df.empty:
                     pass
                 if r_col[9].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
-                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal"])
+                    save_sheet_data("Portfolio", p_df, p_schema)
                     st.rerun()
             else:
                 r_col = st.columns([1.5, 1.2, 1.0, 1.5, 1.5, 1.2, 2.0, 2.0, 1.0, 1.0])
@@ -1796,7 +1798,7 @@ if not p_df.empty:
                 r_col[8].write("")  # Empty space for Analyze
                 if r_col[9].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
                     p_df = p_df.drop(idx)
-                    save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity"])
+                    save_sheet_data("Portfolio", p_df, p_schema)
                     st.rerun()
         except Exception:
             st.error(f"Error processing {clean_ticker}")

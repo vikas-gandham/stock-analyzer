@@ -1690,8 +1690,26 @@ if not p_df.empty:
         if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
         clean_ticker = sanitize_ticker(ticker)
         buy_price = float(row.get("Buy_Price", 0))
-        init_stop = float(row.get("Initial_Stop", buy_price * 0.9)) # fallback
-        high_trail = float(row.get("Highest_Trail", init_stop))
+
+        # Safely extract Initial Stop (Fallback to 10% trailing stop for legacy rows)
+        raw_init = row.get("Initial_Stop")
+        if pd.isna(raw_init) or str(raw_init).strip() == "" or raw_init is None:
+            init_stop = buy_price * 0.9 
+        else:
+            try:
+                init_stop = float(raw_init)
+            except (ValueError, TypeError):
+                init_stop = buy_price * 0.9
+
+        # Safely extract Highest Trail
+        raw_trail = row.get("Highest_Trail")
+        if pd.isna(raw_trail) or str(raw_trail).strip() == "" or raw_trail is None:
+            high_trail = init_stop
+        else:
+            try:
+                high_trail = float(raw_trail)
+            except (ValueError, TypeError):
+                high_trail = init_stop
 
         try:
             p_data = fetch_ohlcv(clean_ticker)

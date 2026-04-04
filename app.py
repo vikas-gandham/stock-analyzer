@@ -1479,63 +1479,33 @@ if search_query:
             '''
             st.markdown(rating_html, unsafe_allow_html=True)
             
-            # --- Smart Action Buttons (Watchlist + Portfolio) ---
+            # --- Smart Action Buttons (Watchlist) ---
             clean_p = sanitize_ticker(full_ticker)
-            action_col1, action_col2 = st.columns(2)
-
-            with action_col1:
-                WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
-                w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-                if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
-                    st.button("✅ In Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
-                else:
-                    if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
-                        w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-                        if clean_p not in w_df_check["Ticker"].values:
-                            cond_label_add, _, _ = get_market_condition(df)
-                            ctx_add = str(cond_label_add).strip()
-                            for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
-                                ctx_add = ctx_add.replace(pfx, "")
-                            _, t_pts_add, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
-                            new_row = pd.DataFrame([{
-                                "Ticker": clean_p,
-                                "Price": round(float(latest["Close"]), 2),
-                                "Rating": master_rating,
-                                "Entry Context": ctx_add,
-                                "Trend Strength": f"{t_pts_add}/2",
-                                "Stop Loss": round(float(support_val) * 0.98, 2),
-                            }])
-                            w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                            save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
-                            st.success(f"Added {clean_p} to Watchlist!")
-                            st.rerun()
-
-            with action_col2:
-                p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
-                p_df_check = load_sheet_data("Portfolio", p_schema)
-                if not p_df_check.empty and clean_p in p_df_check["Ticker"].values:
-                    st.button("💼 In Portfolio", disabled=True, use_container_width=True, key="btn_p_dis")
-                else:
-                    with st.expander("➕ Add Existing Trade Manually"):
-                        st.markdown(f"**Add {clean_p} to Portfolio**")
-                        m_buy = st.number_input("Buy Price (₹)", min_value=0.01, value=float(latest["Close"]), step=0.5, key="m_buy_qty")
-                        m_stop = st.number_input("Initial Stop (₹)", min_value=0.01, value=float(support_val), step=0.5, key="m_stop_qty")
-                        m_qty = st.number_input("Quantity", min_value=1, value=1, step=1, key="m_qty_qty")
-                        if st.button("Submit Trade", use_container_width=True, key="btn_p_submit"):
-                            p_df_full = load_sheet_data("Portfolio", p_schema)
-                            if clean_p not in p_df_full["Ticker"].values:
-                                new_trade = pd.DataFrame([{
-                                    "Ticker": clean_p,
-                                    "Buy_Price": m_buy,
-                                    "Initial_Stop": m_stop,
-                                    "Highest_Trail": m_stop,
-                                    "Quantity": m_qty,
-                                    "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
-                                }])
-                                p_df_full = pd.concat([p_df_full, new_trade], ignore_index=True)
-                                save_sheet_data("Portfolio", p_df_full, p_schema)
-                                st.success(f"Added {clean_p} to Portfolio!")
-                                st.rerun()
+            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
+            w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+            if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
+                st.button("✅ In Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
+            else:
+                if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
+                    w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+                    if clean_p not in w_df_check["Ticker"].values:
+                        cond_label_add, _, _ = get_market_condition(df)
+                        ctx_add = str(cond_label_add).strip()
+                        for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                            ctx_add = ctx_add.replace(pfx, "")
+                        _, t_pts_add, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+                        new_row = pd.DataFrame([{
+                            "Ticker": clean_p,
+                            "Price": round(float(latest["Close"]), 2),
+                            "Rating": master_rating,
+                            "Entry Context": ctx_add,
+                            "Trend Strength": f"{t_pts_add}/2",
+                            "Stop Loss": round(float(support_val) * 0.98, 2),
+                        }])
+                        w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
+                        save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
+                        st.success(f"Added {clean_p} to Watchlist!")
+                        st.rerun()
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -1634,7 +1604,7 @@ if search_query:
                         
                         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                         
-                        if st.button("💼 Add to Portfolio", type="primary", use_container_width=True):
+                        if st.button("💼 Add to Portfolio", use_container_width=True):
                             clean_p = sanitize_ticker(full_ticker)
                             p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
                             p_df = load_sheet_data("Portfolio", p_schema)

@@ -218,7 +218,7 @@ def ensure_worksheets_exist(conn):
         try:
             conn.read(worksheet="Watchlist", ttl=0)
         except Exception:
-            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Signal"]))
+            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]))
         
         # 2. Portfolio
         try:
@@ -406,9 +406,9 @@ def background_batch_scan():
                         else:
                             p_df.at[idx, "Signal"] = "✅ HOLD"
 
-                        # Rating: text-based master verdict
+                        # Rating: clean text-based master verdict (no emojis)
                         if score >= 7:
-                            p_rating = "STRONG BUY (Techno-Funda)"
+                            p_rating = "STRONG BUY"
                         elif score >= 5:
                             p_rating = "MODERATE BUY"
                         elif score >= 3:
@@ -423,7 +423,7 @@ def background_batch_scan():
             save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Quantity", "Signal", "Rating"])
 
         # 2. Watchlist Scan
-        w_df = load_sheet_data("Watchlist", ["Ticker", "Signal", "Rating"])
+        w_df = load_sheet_data("Watchlist", ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"])
         if not w_df.empty:
             for idx, row in w_df.iterrows():
                 try:
@@ -432,19 +432,17 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, _, _, _, _ = calculate_master_score(df, funda)
-                        label, color, _ = get_market_condition(df)
+                        score, t_pts, _, _, _ = calculate_master_score(df, funda)
+                        label, _, _ = get_market_condition(df)
+                        latest = df.iloc[-1]
+                        support_val = df["Support_1"].iloc[-1]
 
-                        # Signal: market condition-based alert
-                        if "SAFE" in label:
-                            w_df.at[idx, "Signal"] = "🔥 BUY NOW"
-                            st.toast(f"🚨 Alert: {ticker} is in the Buy Zone!")
-                        else:
-                            w_df.at[idx, "Signal"] = "Neutral"
+                        # Price
+                        w_df.at[idx, "Price"] = round(float(latest["Close"]), 2)
 
-                        # Rating: text-based master verdict
+                        # Rating: clean text, no emojis
                         if score >= 7:
-                            w_rating = "STRONG BUY (Techno-Funda)"
+                            w_rating = "STRONG BUY"
                         elif score >= 5:
                             w_rating = "MODERATE BUY"
                         elif score >= 3:
@@ -452,11 +450,28 @@ def background_batch_scan():
                         else:
                             w_rating = "AVOID"
                         w_df.at[idx, "Rating"] = w_rating
+
+                        # Entry Context: stripped label text (e.g. SAFE, FAIR, OVEREXTENDED)
+                        # Strip leading emoji/color indicator
+                        context_str = str(label).strip()
+                        for prefix in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                            context_str = context_str.replace(prefix, "")
+                        if "SAFE" in label:
+                            st.toast(f"🚨 Alert: {ticker} is in the Buy Zone!")
+                        w_df.at[idx, "Entry Context"] = context_str
+
+                        # Trend Strength: t_points out of 2
+                        w_df.at[idx, "Trend Strength"] = f"{t_pts}/2"
+
+                        # Stop Loss: 2% below Support_1
+                        w_df.at[idx, "Stop Loss"] = round(support_val * 0.98, 2)
                 except: pass
 
-            # Clean up any nan signals before saving
-            w_df["Signal"] = w_df["Signal"].fillna("Neutral").replace("nan", "Neutral")
-            save_sheet_data("Watchlist", w_df, ["Ticker", "Signal", "Rating"])
+            # Purge nan ghost data in Rating column
+            w_df["Rating"] = w_df["Rating"].astype(str).replace(
+                {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
+            )
+            save_sheet_data("Watchlist", w_df, ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"])
 
         # 3. Log to ScanHistory — only when connection is confirmed active
         if get_conn() is not None:
@@ -1466,7 +1481,7 @@ if search_query:
             s_score = (s_points / 2) * 100
             adx_v = float(df["ADX"].iloc[-1])
 
-            if total_score >= 7: master_rating, rating_color_hex = "STRONG BUY (Techno-Funda)", "#00FF00"
+            if total_score >= 7: master_rating, rating_color_hex = "STRONG BUY", "#00FF00"
             elif total_score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
             elif total_score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
             else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
@@ -1486,16 +1501,29 @@ if search_query:
             action_col1, action_col2 = st.columns(2)
 
             with action_col1:
-                w_df_check = load_sheet_data("Watchlist", ["Ticker", "Rating"])
+                WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
+                w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
                 if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
                     st.button("✅ In Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
                 else:
                     if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
-                        w_df_check = load_sheet_data("Watchlist", ["Ticker", "Rating"])
+                        w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
                         if clean_p not in w_df_check["Ticker"].values:
-                            new_row = pd.DataFrame([{"Ticker": clean_p, "Rating": master_rating}])
+                            cond_label_add, _, _ = get_market_condition(df)
+                            ctx_add = str(cond_label_add).strip()
+                            for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                                ctx_add = ctx_add.replace(pfx, "")
+                            _, t_pts_add, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+                            new_row = pd.DataFrame([{
+                                "Ticker": clean_p,
+                                "Price": round(float(latest["Close"]), 2),
+                                "Rating": master_rating,
+                                "Entry Context": ctx_add,
+                                "Trend Strength": f"{t_pts_add}/2",
+                                "Stop Loss": round(float(support_val) * 0.98, 2),
+                            }])
                             w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                            save_sheet_data("Watchlist", w_df_check, ["Ticker", "Rating"])
+                            save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
                             st.success(f"Added {clean_p} to Watchlist!")
                             st.rerun()
 
@@ -1750,32 +1778,40 @@ st.subheader("⭐ Watchlist")
 if st.session_state.get("sheets_error"):
     st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
 
-w_df = load_sheet_data("Watchlist", ["Ticker", "Signal", "Rating"])
+# --- Pandas Styling Function for Rating column ---
+def style_ratings(val):
+    val_str = str(val).upper()
+    if 'BUY' in val_str:
+        return 'color: #00d26a; font-weight: bold;'  # Green
+    elif 'HOLD' in val_str or 'WATCHLIST' in val_str:
+        return 'color: #fbd63f; font-weight: bold;'  # Yellow
+    elif 'AVOID' in val_str or 'SELL' in val_str:
+        return 'color: #f7556a; font-weight: bold;'  # Red
+    return ''
+
+WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
+w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
+
+# Purge nan ghost data from legacy Rating values
+if not w_df.empty:
+    w_df["Rating"] = w_df["Rating"].astype(str).replace(
+        {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
+    )
 
 if not w_df.empty:
-    # 9-column header ─ Ticker | Price | Rating | Condition | Signal | S1 Stop | T1 Target | Analyze | Del
-    wh_col = st.columns([2.5, 1, 1.5, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
-    wh_col[0].markdown("**Ticker**")
-    wh_col[1].markdown("**Price**")
-    wh_col[2].markdown("**Rating**")
-    wh_col[3].markdown("**Condition**")
-    wh_col[4].markdown("**Signal**")
-    wh_col[5].markdown("**🛡️ S1 (Runner)**")
-    wh_col[6].markdown("**🎯 T1 (Book 50%)**")
-    wh_col[7].markdown("**Analyze**")
-    wh_col[8].markdown("**🗑️**")
-
-    # Wrapped Container with Throttle to prevent errors
+    # ── Live-refresh live metrics per row, then render styled table ──────
+    display_rows = []
     with st.container():
         for idx, row in w_df.iterrows():
-            time.sleep(0.05) # Minor throttle for yfinance
+            time.sleep(0.05)  # Minor throttle for yfinance
             ticker = row["Ticker"]
-            if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
+            if not ticker or pd.isna(ticker) or str(ticker).strip() == '' or str(ticker).lower() == 'nan':
+                continue
             clean_ticker = sanitize_ticker(ticker)
             try:
                 w_data = fetch_ohlcv(clean_ticker)
 
-                # Force Sync / Smart Search Fallback
+                # Smart Search Fallback
                 if w_data.empty:
                     try:
                         search_res = yf.Search(clean_ticker, max_results=1).quotes
@@ -1783,57 +1819,78 @@ if not w_df.empty:
                             new_sym = search_res[0]['symbol']
                             w_data = fetch_ohlcv(new_sym)
                             clean_ticker = new_sym
-                    except Exception: pass
+                    except Exception:
+                        pass
 
                 if not w_data.empty:
                     w_data = compute_indicators(w_data)
-                    f_w = fetch_fundamentals(clean_ticker)
-                    scr_w, _, _, s_pts_w, _ = calculate_master_score(w_data, f_w)
-
                     w_cmp = w_data['Close'].iloc[-1]
                     w_s1 = w_data['Support_1'].iloc[-1]
+                    w_label, _, _ = get_market_condition(w_data)
+                    ctx_live = str(w_label).strip()
+                    for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                        ctx_live = ctx_live.replace(pfx, "")
+                    f_w = fetch_fundamentals(clean_ticker)
+                    _, t_pts_w, _, _, _ = calculate_master_score(w_data, f_w)
+                    stop_loss_live = round(w_s1 * 0.98, 2)
 
-                    price_str = f"₹{w_cmp:,.2f}"
-                    s1_str = f"₹{w_s1:,.2f}"
-
-                    # Unified Marker Logic
-                    w_label, w_color, _ = get_market_condition(w_data)
-
-                    # ── T1: 1:3 R:R prospective entry target ─────────────────────
-                    # "If I buy NOW at CMP, with S1 as my stop, where is 1:3?"
-                    w_risk = w_cmp - w_s1
-                    if w_risk > 0:
-                        w_t1 = w_cmp + (w_risk * 3)
-                        w_t1_str = f"🎯 ₹{w_t1:,.2f}"
-                        w_t1_color = "#00D4AA"
-                    else:
-                        w_t1_str, w_t1_color = "N/A", "#AAAAAA"
-
-                    wr_col = st.columns([2.5, 1, 1.5, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
-                    wr_col[0].write(clean_ticker)
-                    wr_col[1].write(price_str)
-                    rating_val = str(row.get("Rating", "—") or f"{scr_w}/8")
-                    wr_col[2].write(rating_val)
-                    wr_col[3].markdown(f"<span style='color:{w_color};'>{w_label}</span>", unsafe_allow_html=True)
-                    wr_col[4].write(str(row.get("Signal", "Neutral")))
-                    wr_col[5].write(s1_str)
-                    wr_col[6].markdown(f"<span style='color:{w_t1_color}; font-weight:bold;'>{w_t1_str}</span>", unsafe_allow_html=True)
-                    if wr_col[7].button("Analyze", key=f"w_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)):
-                        pass
-                    if wr_col[8].button("🗑️", key=f"w_del_{clean_ticker}_{idx}"):
-                        w_df = w_df.drop(idx)
-                        save_sheet_data("Watchlist", w_df, ["Ticker", "Signal", "Rating"])
-                        st.rerun()
+                    display_rows.append({
+                        "_idx": idx,
+                        "_ticker": clean_ticker,
+                        "Ticker": clean_ticker,
+                        "Price": f"₹{w_cmp:,.2f}",
+                        "Rating": str(row.get("Rating", "AVOID")),
+                        "Entry Context": ctx_live,
+                        "Trend Strength": f"{t_pts_w}/2",
+                        "Stop Loss": f"₹{stop_loss_live:,.2f}",
+                    })
                 else:
-                    wr_col = st.columns([2.5, 1, 1.5, 1.5, 1.2, 1.2, 1.5, 1, 0.5])
-                    wr_col[0].write(f"⚠️ {clean_ticker}")
-                    for i in range(1, 8): wr_col[i].write("N/A")
-                    if wr_col[8].button("🗑️", key=f"w_del_err_{clean_ticker}_{idx}"):
-                        w_df = w_df.drop(idx)
-                        save_sheet_data("Watchlist", w_df, ["Ticker"])
-                        st.rerun()
+                    display_rows.append({
+                        "_idx": idx,
+                        "_ticker": clean_ticker,
+                        "Ticker": f"⚠️ {clean_ticker}",
+                        "Price": "N/A",
+                        "Rating": str(row.get("Rating", "AVOID")),
+                        "Entry Context": "N/A",
+                        "Trend Strength": "N/A",
+                        "Stop Loss": "N/A",
+                    })
             except Exception:
                 st.error(f"Error processing {clean_ticker}")
+
+    if display_rows:
+        # Build display DataFrame
+        disp_df = pd.DataFrame(display_rows)
+        table_df = disp_df[["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]].copy()
+
+        # Apply Pandas color styling to Rating column
+        styled_w_df = table_df.style.map(style_ratings, subset=["Rating"])
+
+        st.dataframe(
+            styled_w_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # ── Per-row action buttons (Analyze + Delete) below table ──────────
+        btn_cols = st.columns([2.5, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 1])
+        btn_cols[0].markdown("**Ticker**")
+        btn_cols[6].markdown("**Analyze**")
+        btn_cols[7].markdown("**Delete**")
+
+        for dr in display_rows:
+            bc = st.columns([2.5, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 1])
+            bc[0].write(dr["_ticker"])
+            if bc[6].button("Analyze", key=f"w_an_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
+                pass
+            if bc[7].button("Delete", key=f"w_del_{dr['_ticker']}_{dr['_idx']}"):
+                w_df = w_df.drop(dr["_idx"])
+                # Purge nans again before saving
+                w_df["Rating"] = w_df["Rating"].astype(str).replace(
+                    {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
+                )
+                save_sheet_data("Watchlist", w_df, WATCHLIST_COLS)
+                st.rerun()
 else:
     st.info("🔍 Watchlist is empty. Search for a ticker above, then click '➕ Add to Watchlist'.")
 

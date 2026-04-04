@@ -1778,16 +1778,7 @@ st.subheader("⭐ Watchlist")
 if st.session_state.get("sheets_error"):
     st.error("⚠️ Google Sheets Connection Error: Watchlist management is temporarily unavailable.")
 
-# --- Pandas Styling Function for Rating column ---
-def style_ratings(val):
-    val_str = str(val).upper()
-    if 'BUY' in val_str:
-        return 'color: #00d26a; font-weight: bold;'  # Green
-    elif 'HOLD' in val_str or 'WATCHLIST' in val_str:
-        return 'color: #fbd63f; font-weight: bold;'  # Yellow
-    elif 'AVOID' in val_str or 'SELL' in val_str:
-        return 'color: #f7556a; font-weight: bold;'  # Red
-    return ''
+
 
 WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
 w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
@@ -1841,7 +1832,7 @@ if not w_df.empty:
                         "Price": f"₹{w_cmp:,.2f}",
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": ctx_live,
-                        "Trend Strength": f"{t_pts_w}/2",
+                        "Trend": f"{t_pts_w}/2",
                         "Stop Loss": f"₹{stop_loss_live:,.2f}",
                     })
                 else:
@@ -1852,40 +1843,45 @@ if not w_df.empty:
                         "Price": "N/A",
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": "N/A",
-                        "Trend Strength": "N/A",
+                        "Trend": "N/A",
                         "Stop Loss": "N/A",
                     })
             except Exception:
                 st.error(f"Error processing {clean_ticker}")
 
     if display_rows:
-        # Build display DataFrame
-        disp_df = pd.DataFrame(display_rows)
-        table_df = disp_df[["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]].copy()
+        # ── 8-column layout: data + inline Analyze / Delete buttons ────────
+        COL_LAYOUT = [2, 1.5, 2, 2, 1.5, 1.5, 1, 1]
+        HEADERS = ["Ticker", "Price", "Rating", "Entry Context", "Trend", "Stop Loss", "Analyze", "Delete"]
 
-        # Apply Pandas color styling to Rating column
-        styled_w_df = table_df.style.map(style_ratings, subset=["Rating"])
+        # Header row
+        h_cols = st.columns(COL_LAYOUT)
+        for col, header in zip(h_cols, HEADERS):
+            col.markdown(f"**{header}**")
+        st.markdown("---")
 
-        st.dataframe(
-            styled_w_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        # ── Per-row action buttons (Analyze + Delete) below table ──────────
-        btn_cols = st.columns([2.5, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 1])
-        btn_cols[0].markdown("**Ticker**")
-        btn_cols[6].markdown("**Analyze**")
-        btn_cols[7].markdown("**Delete**")
-
+        # Data rows — Rating colored inline, buttons in same row
         for dr in display_rows:
-            bc = st.columns([2.5, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 1])
-            bc[0].write(dr["_ticker"])
-            if bc[6].button("Analyze", key=f"w_an_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
+            rating_str = str(dr.get("Rating", "")).upper()
+            if "BUY" in rating_str:
+                r_color = "#00d26a"
+            elif "HOLD" in rating_str or "WATCHLIST" in rating_str:
+                r_color = "#fbd63f"
+            else:
+                r_color = "#f7556a"
+            rating_html = f"<span style='color:{r_color}; font-weight:bold;'>{dr['Rating']}</span>"
+
+            r_cols = st.columns(COL_LAYOUT)
+            r_cols[0].write(dr["Ticker"])
+            r_cols[1].write(dr["Price"])
+            r_cols[2].markdown(rating_html, unsafe_allow_html=True)
+            r_cols[3].write(dr["Entry Context"])
+            r_cols[4].write(dr["Trend"])
+            r_cols[5].write(dr["Stop Loss"])
+            if r_cols[6].button("Analyze", key=f"ana_w_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
-            if bc[7].button("Delete", key=f"w_del_{dr['_ticker']}_{dr['_idx']}"):
+            if r_cols[7].button("🗑️", key=f"del_w_{dr['_ticker']}_{dr['_idx']}"):
                 w_df = w_df.drop(dr["_idx"])
-                # Purge nans again before saving
                 w_df["Rating"] = w_df["Rating"].astype(str).replace(
                     {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
                 )

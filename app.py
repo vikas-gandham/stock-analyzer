@@ -758,6 +758,12 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         touches = ((df["LOW"].iloc[-21:-1] >= s_level * 0.99) & 
                    (df["LOW"].iloc[-21:-1] <= s_level * 1.01)).sum()
         df["S1_STRENGTH"] = touches
+        
+        r_level = df["RESISTANCE_1"].iloc[-1]
+        # Count how many times High price touched the 1% Resistance zone in last 20 days
+        r_touches = ((df["HIGH"].iloc[-21:-1] >= r_level * 0.99) & 
+                     (df["HIGH"].iloc[-21:-1] <= r_level * 1.01)).sum()
+        df["R1_STRENGTH"] = r_touches
     else:
         # Fallback if window is too small
         last_close = df["CLOSE"].iloc[-1]
@@ -765,6 +771,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["SUPPORT_1"] = last_close
         df["RESISTANCE_1"] = last_close
         df["S1_STRENGTH"] = 0
+        df["R1_STRENGTH"] = 0
         
     if "VOL_20SMA" not in df.columns:
         df["VOL_20SMA"] = 1
@@ -773,7 +780,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns={
         'CLOSE': 'Close', 'HIGH': 'High', 'LOW': 'Low', 'OPEN': 'Open', 'VOLUME': 'Volume',
         'PIVOT': 'Pivot', 'SUPPORT_1': 'Support_1', 'RESISTANCE_1': 'Resistance_1',
-        'VOL_20SMA': 'Vol_20SMA', 'S1_STRENGTH': 'S1_Strength'
+        'VOL_20SMA': 'Vol_20SMA', 'S1_STRENGTH': 'S1_Strength', 'R1_STRENGTH': 'R1_Strength'
     })
     
     return df.fillna(0)
@@ -943,7 +950,7 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0):
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0):
     bullets = []
     
     # 1. Risk/Reward (The Swing Trader's Holy Grail)
@@ -983,6 +990,17 @@ def generate_swing_report(price, support, resistance, vol_surge, is_green, high_
 
     if s1_strength >= 3:
         bullets.append({"type": "success", "msg": f"🏰 **Structural Strength:** HIGH. Price has respected this support zone {int(s1_strength)} times recently. This is a high-probability floor."})
+
+    if r_strength >= 3:
+        bullets.append({
+            "type": "error", 
+            "msg": f"🧱 **Structural Resistance:** HIGH. Price has been rejected by this ceiling {int(r_strength)} times in the last 20 days. This is a 'Brick Wall' supply zone; expect a struggle unless volume surge is massive."
+        })
+    elif r_strength >= 1:
+        bullets.append({
+            "type": "info", 
+            "msg": f"🏗️ **Structural Resistance:** MODERATE. This level has been tested {int(r_strength)} times. A clean break here signals a high-conviction momentum move."
+        })
 
     # 4. Final Verdict
     v_type = "info"
@@ -1488,11 +1506,13 @@ if search_query:
             elif total_score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
             else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
 
+            r_str = int(df["R1_Strength"].iloc[-1]) if "R1_Strength" in df.columns else 0
+
             rating_html = f'''
             <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
                 <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div>
                 <div style="font-size: 0.9em; color: gray; margin-top: 5px;">
-                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Strength: {strength_pts}/1
+                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Strength: {strength_pts}/1 | R-Touches: {r_str}
                 </div>
             </div>
             '''
@@ -1572,7 +1592,8 @@ if search_query:
                 is_green=is_green, 
                 high_52w=week52_high,
                 master_rating=master_rating,
-                s1_strength=df["S1_Strength"].iloc[-1] if "S1_Strength" in df.columns else 0
+                s1_strength=df["S1_Strength"].iloc[-1] if "S1_Strength" in df.columns else 0,
+                r_strength=df["R1_Strength"].iloc[-1] if "R1_Strength" in df.columns else 0
             )
             
             for alert in alerts:

@@ -415,7 +415,7 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts = calculate_master_score(df, funda)
+                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
                         support_val = df["Support_1"].iloc[-1]
@@ -784,6 +784,19 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         'VOL_20SMA': 'Vol_20SMA', 'S1_STRENGTH': 'S1_Strength', 'R1_STRENGTH': 'R1_Strength'
     })
     
+    # Calculate RSI
+    df['RSI_14'] = ta.rsi(df['Close'], length=14)
+    if 'RSI_14' not in df.columns:
+        df['RSI_14'] = 50
+
+    # Bear Trap Detection: Lower Wick length vs Body length
+    body_size = abs(df['Close'] - df['Open'])
+    lower_wick = df['Open'].where(df['Close'] > df['Open'], df['Close']) - df['Low']
+    df['Wick_Ratio'] = lower_wick / body_size.replace(0, 0.01)
+
+    # Bullish RSI Divergence (Simple): Is RSI higher than 3 days ago while price is lower?
+    df['RSI_Rising'] = df['RSI_14'] > df['RSI_14'].shift(3)
+
     return df.fillna(0)
 
 
@@ -951,11 +964,14 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0):
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0, wick_ratio=0, low_price=0):
     bullets = []
     
     if sma_pts == 1:
         bullets.append({"type": "success", "msg": "🚀 **Launchpad Position:** Stock is trading within 10% of its 50-DMA with positive momentum. This is a high-probability 'Ignition Zone' for early swing trades."})
+
+    if wick_ratio > 1.5 and low_price < support:
+        bullets.append({"type": "success", "msg": "🛡️ **Bear Trap Detected:** Price dipped below support but buyers aggressively drove it back up (Long lower wick). This is a high-conviction sign of institutional defense."})
 
     # 1. Risk/Reward (The Swing Trader's Holy Grail)
     risk = price - support
@@ -1095,8 +1111,8 @@ def fetch_market_cap(ticker: str) -> str:
 
 
 def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
-    """Calculate the 9-point Master Rating score."""
-    if df.empty: return 0, 0, 0, 0, 0, 0, 0
+    """Calculate the 11-point Master Rating score."""
+    if df.empty: return 0, 0, 0, 0, 0, 0, 0, 0
     latest = df.iloc[-1]
     support_val = df["Support_1"].iloc[-1]
     resistance_val = df["Resistance_1"].iloc[-1]
@@ -1146,9 +1162,16 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
             if close_val > sma_val and close_val < (sma_val * 1.1):
                 sma_pts = 1
 
-    total_score = s_points + t_points + v_points + f_points + strength_pts + sma_pts
+    # 6. Support Defense (Bear Trap / Divergence)
+    defense_pts = 0
+    s1_calc = latest['Support_1'] if 'Support_1' in df.columns else latest['Close']
+    if latest['Close'] < s1_calc * 1.05:
+        if latest.get('RSI_Rising', False) or latest.get('Wick_Ratio', 0) > 1.5:
+            defense_pts = 1
 
-    return total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts
+    total_score = s_points + t_points + v_points + f_points + strength_pts + sma_pts + defense_pts
+
+    return total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts, defense_pts
 
 
 def get_market_condition(df):
@@ -1518,7 +1541,7 @@ if search_query:
             h6.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
 
             # --- Master Rating ---
-            total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+            total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts, def_pts = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
             s_score = (s_points / 2) * 100
             adx_v = float(df["ADX"].iloc[-1])
 
@@ -1533,7 +1556,7 @@ if search_query:
             <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
                 <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div>
                 <div style="font-size: 0.9em; color: gray; margin-top: 5px;">
-                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Str: {strength_pts}/1 | SMA: {sma_pts}/1 | R-Touches: {r_str}
+                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Str: {strength_pts}/1 | SMA: {sma_pts}/1 | Def: {def_pts}/1 | R-Touches: {r_str}
                 </div>
             </div>
             '''
@@ -1553,7 +1576,7 @@ if search_query:
                         ctx_add = str(cond_label_add).strip()
                         for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             ctx_add = ctx_add.replace(pfx, "")
-                        score_add, t_pts_add, v_pts_add, s_pts_add, f_pts_add, str_pts_add, sma_pts_add = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+                        score_add, t_pts_add, v_pts_add, s_pts_add, f_pts_add, str_pts_add, sma_pts_add, def_pts_add = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p,
                             "Price": round(float(latest["Close"]), 2),
@@ -1615,7 +1638,9 @@ if search_query:
                 master_rating=master_rating,
                 s1_strength=df["S1_Strength"].iloc[-1] if "S1_Strength" in df.columns else 0,
                 r_strength=df["R1_Strength"].iloc[-1] if "R1_Strength" in df.columns else 0,
-                sma_pts=sma_pts
+                sma_pts=sma_pts,
+                wick_ratio=df['Wick_Ratio'].iloc[-1] if 'Wick_Ratio' in df.columns else 0,
+                low_price=latest['Low']
             )
             
             for alert in alerts:
@@ -1761,7 +1786,7 @@ if not p_df.empty:
             if not p_data.empty:
                 p_data = compute_indicators(p_data)
                 funda = fetch_fundamentals(clean_ticker)
-                score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts = calculate_master_score(p_data, funda)
+                score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(p_data, funda)
                 cmp = p_data["Close"].iloc[-1]
                 pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
 
@@ -1818,8 +1843,14 @@ if not p_df.empty:
                 # ── Verdict ──────────────────────────────────────────────────
                 # Instead of cutting at exactly S1, we allow a 1% 'noise' buffer
                 stop_zone = current_trail * 0.99
-                if cmp < stop_zone:
-                    verdict, v_color = "🔴 SELL (Stop Hit)", "#FF4B4B"
+                vol_ratio = v_ratio
+                
+                # Only trigger URGENT SELL if price is below zone AND volume is high (>0.8x)
+                # If volume is low, it's just a 'Test', not a breakdown.
+                if cmp < stop_zone and vol_ratio > 0.8:
+                    verdict, v_color = "🔴 SELL (Breakdown)", "#FF4B4B"
+                elif cmp < stop_zone and vol_ratio <= 0.8:
+                    verdict, v_color = "🟡 WATCH (Low Vol Test)", "#FFD700"
                 elif v_ratio >= 1.5 and not is_green and rsi > 65:
                     verdict, v_color = "🔴 SELL (Exhaustion)", "#FF4B4B"
                 elif score < 4:
@@ -1910,7 +1941,7 @@ if not w_df.empty:
                     for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                         ctx_live = ctx_live.replace(pfx, "")
                     f_w = fetch_fundamentals(clean_ticker)
-                    score_w, t_pts_w, v_pts_w, s_pts_w, f_pts_w, str_pts_w, sma_pts_w = calculate_master_score(w_data, f_w)
+                    score_w, t_pts_w, v_pts_w, s_pts_w, f_pts_w, str_pts_w, sma_pts_w, def_pts_w = calculate_master_score(w_data, f_w)
                     stop_loss_live = round(w_s1 * 0.98, 2)
 
                     display_rows.append({

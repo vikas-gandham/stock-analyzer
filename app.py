@@ -415,7 +415,7 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, t_pts, _, _, _, _ = calculate_master_score(df, funda)
+                        score, t_pts, _, _, _, _, _ = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
                         support_val = df["Support_1"].iloc[-1]
@@ -437,7 +437,7 @@ def background_batch_scan():
                         # Entry Context: stripped label text (e.g. SAFE, FAIR, OVEREXTENDED)
                         # Strip leading emoji/color indicator
                         context_str = str(label).strip()
-                        for prefix in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                        for prefix in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             context_str = context_str.replace(prefix, "")
                         if "SAFE" in label:
                             st.toast(f"🚨 Alert: {ticker} is in the Buy Zone!")
@@ -950,9 +950,12 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0):
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0):
     bullets = []
     
+    if sma_pts == 1:
+        bullets.append({"type": "success", "msg": "🚀 **Launchpad Position:** Stock is trading within 10% of its 50-DMA with positive momentum. This is a high-probability 'Ignition Zone' for early swing trades."})
+
     # 1. Risk/Reward (The Swing Trader's Holy Grail)
     risk = price - support
     reward = resistance - price
@@ -1132,9 +1135,15 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     
     # New Layer 3: Confluence
     strength_pts = 1 if df.get("S1_Strength", pd.Series([0], index=[-1])).iloc[-1] >= 3 else 0
-    total_score = s_points + t_points + v_points + f_points + strength_pts
+    
+    # 5. SMA 50 Proximity (Screener Alignment)
+    sma_50 = df['SMA_50'].iloc[-1] if 'SMA_50' in df.columns else latest['Close']
+    close = df['Close'].iloc[-1]
+    sma_pts = 1 if (close > sma_50 and close < sma_50 * 1.1) else 0
 
-    return total_score, t_points, v_points, s_points, f_points, strength_pts
+    total_score = s_points + t_points + v_points + f_points + strength_pts + sma_pts
+
+    return total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts
 
 
 def get_market_condition(df):
@@ -1158,10 +1167,17 @@ def get_market_condition(df):
         risk_pct = 50
     
     # Logic Hierarchy
+    # If Volume Surge > 1.5 and Price is at the top of the range, it's a breakout, not a risk.
+    latest_vol_surge = df['Volume'].iloc[-1] / (df['Vol_20SMA'].iloc[-1] if 'Vol_20SMA' in df.columns and df['Vol_20SMA'].iloc[-1] > 0 else 1)
+    is_green = df['Close'].iloc[-1] >= df['Open'].iloc[-1]
+
+    if latest_vol_surge >= 1.5 and risk_pct > 80 and is_green:
+        return "🚀 BREAKOUT", "#00D4AA", risk_pct
+
     if rsi < 30: return "🔵 OVERSOLD", "blue", risk_pct
     if rsi > 70: return "🟣 OVERBOUGHT", "purple", risk_pct
-    if risk_pct < 35: return "🟢 SAFE", "#00D4AA", risk_pct
-    if risk_pct > 75: return "🔴 OVEREXTENDED", "#FF4B4B", risk_pct
+    if risk_pct < 45: return "🟢 SAFE", "#00D4AA", risk_pct
+    if risk_pct > 85: return "🔴 OVEREXTENDED", "#FF4B4B", risk_pct
     return "🟡 FAIR", "#FFD700", risk_pct
 
 
@@ -1497,7 +1513,7 @@ if search_query:
             h6.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
 
             # --- Master Rating ---
-            total_score, t_points, v_points, s_points, f_points, strength_pts = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+            total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
             s_score = (s_points / 2) * 100
             adx_v = float(df["ADX"].iloc[-1])
 
@@ -1512,7 +1528,7 @@ if search_query:
             <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
                 <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div>
                 <div style="font-size: 0.9em; color: gray; margin-top: 5px;">
-                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Strength: {strength_pts}/1 | R-Touches: {r_str}
+                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Str: {strength_pts}/1 | SMA: {sma_pts}/1 | R-Touches: {r_str}
                 </div>
             </div>
             '''
@@ -1530,9 +1546,9 @@ if search_query:
                     if clean_p not in w_df_check["Ticker"].values:
                         cond_label_add, _, _ = get_market_condition(df)
                         ctx_add = str(cond_label_add).strip()
-                        for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                        for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             ctx_add = ctx_add.replace(pfx, "")
-                        _, t_pts_add, _, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+                        _, t_pts_add, _, _, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p,
                             "Price": round(float(latest["Close"]), 2),
@@ -1593,7 +1609,8 @@ if search_query:
                 high_52w=week52_high,
                 master_rating=master_rating,
                 s1_strength=df["S1_Strength"].iloc[-1] if "S1_Strength" in df.columns else 0,
-                r_strength=df["R1_Strength"].iloc[-1] if "R1_Strength" in df.columns else 0
+                r_strength=df["R1_Strength"].iloc[-1] if "R1_Strength" in df.columns else 0,
+                sma_pts=sma_pts
             )
             
             for alert in alerts:

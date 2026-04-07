@@ -415,7 +415,7 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, t_pts, _, _, _ = calculate_master_score(df, funda)
+                        score, t_pts, _, _, _, _ = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
                         support_val = df["Support_1"].iloc[-1]
@@ -736,22 +736,35 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     })
     
     # Pivot logic
-    previous_window = df.iloc[-21:-1]
-    if not previous_window.empty:
-        pp_high = previous_window["HIGH"].max()
-        pp_low = previous_window["LOW"].min()
-        pp_close = previous_window["CLOSE"].iloc[-1]
+    # 20-day window for macro context
+    win_20 = df.iloc[-21:-1]
+    # 5-day window for recent momentum
+    win_5 = df.iloc[-6:-1]
 
-        pivot = (pp_high + pp_low + pp_close) / 3
+    if not win_20.empty and not win_5.empty:
+        # Weighted High/Low (2x weight to last 5 days)
+        w_high = (win_20["HIGH"].max() + win_5["HIGH"].max()) / 2
+        w_low = (win_20["LOW"].min() + win_5["LOW"].min()) / 2
+        w_close = win_20["CLOSE"].iloc[-1]
+
+        pivot = (w_high + w_low + w_close) / 3
+        # Establishing the S1/R1 lines
         df["PIVOT"] = pivot
-        df["SUPPORT_1"] = 2 * pivot - pp_high
-        df["RESISTANCE_1"] = 2 * pivot - pp_low
+        df["SUPPORT_1"] = (2 * pivot) - w_high
+        df["RESISTANCE_1"] = (2 * pivot) - w_low
+        
+        s_level = df["SUPPORT_1"].iloc[-1]
+        # Count how many times price came within 1% of S1 in the last 20 days
+        touches = ((df["LOW"].iloc[-21:-1] >= s_level * 0.99) & 
+                   (df["LOW"].iloc[-21:-1] <= s_level * 1.01)).sum()
+        df["S1_STRENGTH"] = touches
     else:
         # Fallback if window is too small
         last_close = df["CLOSE"].iloc[-1]
         df["PIVOT"] = last_close
         df["SUPPORT_1"] = last_close
         df["RESISTANCE_1"] = last_close
+        df["S1_STRENGTH"] = 0
         
     if "VOL_20SMA" not in df.columns:
         df["VOL_20SMA"] = 1
@@ -760,7 +773,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns={
         'CLOSE': 'Close', 'HIGH': 'High', 'LOW': 'Low', 'OPEN': 'Open', 'VOLUME': 'Volume',
         'PIVOT': 'Pivot', 'SUPPORT_1': 'Support_1', 'RESISTANCE_1': 'Resistance_1',
-        'VOL_20SMA': 'Vol_20SMA'
+        'VOL_20SMA': 'Vol_20SMA', 'S1_STRENGTH': 'S1_Strength'
     })
     
     return df.fillna(0)
@@ -930,7 +943,7 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating):
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0):
     bullets = []
     
     # 1. Risk/Reward (The Swing Trader's Holy Grail)
@@ -967,6 +980,9 @@ def generate_swing_report(price, support, resistance, vol_surge, is_green, high_
         bullets.append({"type": "success", "msg": f"📉 **Macro Structure:** BASELINE REVERSION. Trading within 4% of structural support. This is a classic 'make or break' pivot level for a swing entry."})
     else:
         bullets.append({"type": "info", "msg": f"🧭 **Macro Structure:** MID-RANGE. Trading comfortably between major macro pivot levels. No immediate structural breakouts or breakdowns detected."})
+
+    if s1_strength >= 3:
+        bullets.append({"type": "success", "msg": f"🏰 **Structural Strength:** HIGH. Price has respected this support zone {int(s1_strength)} times recently. This is a high-probability floor."})
 
     # 4. Final Verdict
     v_type = "info"
@@ -1057,8 +1073,8 @@ def fetch_market_cap(ticker: str) -> str:
 
 
 def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
-    """Calculate the 8-point Master Rating score."""
-    if df.empty: return 0, 0, 0, 0, 0
+    """Calculate the 9-point Master Rating score."""
+    if df.empty: return 0, 0, 0, 0, 0, 0
     latest = df.iloc[-1]
     support_val = df["Support_1"].iloc[-1]
     resistance_val = df["Resistance_1"].iloc[-1]
@@ -1096,8 +1112,11 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     if fundamentals["roce"] > 15: f_points += 1
     if fundamentals["debt_to_equity"] < 0.5: f_points += 1
     
-    total_score = s_points + t_points + v_points + f_points
-    return total_score, t_points, v_points, s_points, f_points
+    # New Layer 3: Confluence
+    strength_pts = 1 if df.get("S1_Strength", pd.Series([0], index=[-1])).iloc[-1] >= 3 else 0
+    total_score = s_points + t_points + v_points + f_points + strength_pts
+
+    return total_score, t_points, v_points, s_points, f_points, strength_pts
 
 
 def get_market_condition(df):
@@ -1460,7 +1479,7 @@ if search_query:
             h6.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
 
             # --- Master Rating ---
-            total_score, t_points, v_points, s_points, f_points = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+            total_score, t_points, v_points, s_points, f_points, strength_pts = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
             s_score = (s_points / 2) * 100
             adx_v = float(df["ADX"].iloc[-1])
 
@@ -1473,7 +1492,7 @@ if search_query:
             <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
                 <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div>
                 <div style="font-size: 0.9em; color: gray; margin-top: 5px;">
-                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2
+                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Strength: {strength_pts}/1
                 </div>
             </div>
             '''
@@ -1493,7 +1512,7 @@ if search_query:
                         ctx_add = str(cond_label_add).strip()
                         for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
                             ctx_add = ctx_add.replace(pfx, "")
-                        _, t_pts_add, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+                        _, t_pts_add, _, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p,
                             "Price": round(float(latest["Close"]), 2),
@@ -1552,7 +1571,8 @@ if search_query:
                 vol_surge=v_ratio_raw, 
                 is_green=is_green, 
                 high_52w=week52_high,
-                master_rating=master_rating
+                master_rating=master_rating,
+                s1_strength=df["S1_Strength"].iloc[-1] if "S1_Strength" in df.columns else 0
             )
             
             for alert in alerts:
@@ -1698,7 +1718,7 @@ if not p_df.empty:
             if not p_data.empty:
                 p_data = compute_indicators(p_data)
                 funda = fetch_fundamentals(clean_ticker)
-                score, _, _, _, _ = calculate_master_score(p_data, funda)
+                score, _, _, _, _, _ = calculate_master_score(p_data, funda)
                 cmp = p_data["Close"].iloc[-1]
                 pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
 
@@ -1753,7 +1773,9 @@ if not p_df.empty:
                 pct_html = f"<span style='color:{pct_color}; font-weight:bold;'>{pct_to_stop:.1f}%</span>"
 
                 # ── Verdict ──────────────────────────────────────────────────
-                if cmp < current_trail:
+                # Instead of cutting at exactly S1, we allow a 1% 'noise' buffer
+                stop_zone = current_trail * 0.99
+                if cmp < stop_zone:
                     verdict, v_color = "🔴 SELL (Stop Hit)", "#FF4B4B"
                 elif v_ratio >= 1.5 and not is_green and rsi > 65:
                     verdict, v_color = "🔴 SELL (Exhaustion)", "#FF4B4B"
@@ -1845,7 +1867,7 @@ if not w_df.empty:
                     for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
                         ctx_live = ctx_live.replace(pfx, "")
                     f_w = fetch_fundamentals(clean_ticker)
-                    _, t_pts_w, _, _, _ = calculate_master_score(w_data, f_w)
+                    _, t_pts_w, _, _, _, _ = calculate_master_score(w_data, f_w)
                     stop_loss_live = round(w_s1 * 0.98, 2)
 
                     display_rows.append({

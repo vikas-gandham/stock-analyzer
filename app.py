@@ -415,7 +415,7 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, t_pts, _, _, _, _, _ = calculate_master_score(df, funda)
+                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
                         support_val = df["Support_1"].iloc[-1]
@@ -706,6 +706,7 @@ def fetch_ohlcv(ticker: str) -> pd.DataFrame:
         
         # Nuke duplicates and sort
         df = df.loc[~df.index.duplicated(keep='last')]
+        time.sleep(0.2)
         return df.sort_index()
     except Exception:
         return pd.DataFrame()
@@ -1095,7 +1096,7 @@ def fetch_market_cap(ticker: str) -> str:
 
 def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     """Calculate the 9-point Master Rating score."""
-    if df.empty: return 0, 0, 0, 0, 0, 0
+    if df.empty: return 0, 0, 0, 0, 0, 0, 0
     latest = df.iloc[-1]
     support_val = df["Support_1"].iloc[-1]
     resistance_val = df["Resistance_1"].iloc[-1]
@@ -1137,9 +1138,13 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     strength_pts = 1 if df.get("S1_Strength", pd.Series([0], index=[-1])).iloc[-1] >= 3 else 0
     
     # 5. SMA 50 Proximity (Screener Alignment)
-    sma_50 = df['SMA_50'].iloc[-1] if 'SMA_50' in df.columns else latest['Close']
-    close = df['Close'].iloc[-1]
-    sma_pts = 1 if (close > sma_50 and close < sma_50 * 1.1) else 0
+    sma_pts = 0
+    if 'SMA_50' in df.columns:
+        sma_val = df['SMA_50'].iloc[-1]
+        close_val = df['Close'].iloc[-1]
+        if pd.notna(sma_val) and sma_val > 0:
+            if close_val > sma_val and close_val < (sma_val * 1.1):
+                sma_pts = 1
 
     total_score = s_points + t_points + v_points + f_points + strength_pts + sma_pts
 
@@ -1548,7 +1553,7 @@ if search_query:
                         ctx_add = str(cond_label_add).strip()
                         for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             ctx_add = ctx_add.replace(pfx, "")
-                        _, t_pts_add, _, _, _, _, _ = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+                        score_add, t_pts_add, v_pts_add, s_pts_add, f_pts_add, str_pts_add, sma_pts_add = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p,
                             "Price": round(float(latest["Close"]), 2),
@@ -1756,7 +1761,7 @@ if not p_df.empty:
             if not p_data.empty:
                 p_data = compute_indicators(p_data)
                 funda = fetch_fundamentals(clean_ticker)
-                score, _, _, _, _, _ = calculate_master_score(p_data, funda)
+                score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts = calculate_master_score(p_data, funda)
                 cmp = p_data["Close"].iloc[-1]
                 pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
 
@@ -1902,10 +1907,10 @@ if not w_df.empty:
                     w_s1 = w_data['Support_1'].iloc[-1]
                     w_label, _, _ = get_market_condition(w_data)
                     ctx_live = str(w_label).strip()
-                    for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 "]:
+                    for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                         ctx_live = ctx_live.replace(pfx, "")
                     f_w = fetch_fundamentals(clean_ticker)
-                    _, t_pts_w, _, _, _, _ = calculate_master_score(w_data, f_w)
+                    score_w, t_pts_w, v_pts_w, s_pts_w, f_pts_w, str_pts_w, sma_pts_w = calculate_master_score(w_data, f_w)
                     stop_loss_live = round(w_s1 * 0.98, 2)
 
                     display_rows.append({

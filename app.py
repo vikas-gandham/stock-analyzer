@@ -86,6 +86,16 @@ if "w_ticker_input" not in st.session_state:
     st.session_state["w_ticker_input"] = ""
 if "force_top_reload" not in st.session_state:
     st.session_state["force_top_reload"] = False
+if "alert_history" not in st.session_state:
+    st.session_state["alert_history"] = []
+
+def log_alert(msg, icon="🔔"):
+    """Logs alert to persistent notification history and triggers transient toast."""
+    now_str = datetime.now(IST).strftime("%H:%M:%S")
+    st.session_state["alert_history"].insert(0, {"time": now_str, "msg": msg, "icon": icon})
+    st.session_state["alert_history"] = st.session_state["alert_history"][:50]  # Keep last 50
+    st.toast(msg, icon=icon)
+
 
 # ---------------------------------------------------------------------------
 # Custom CSS
@@ -434,7 +444,7 @@ def background_batch_scan():
                         high_trail = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
                         if not pd.isna(high_trail) and not pd.isna(s1):
                             if s1 > high_trail:
-                                st.toast(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
+                                log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
                                 p_df.at[idx, "Highest_Trail"] = float(s1)
                 except: pass
 
@@ -1513,7 +1523,7 @@ def render_control_center():
 
 st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
 
-col_sym, col_tick = st.columns([7, 3])
+col_sym, col_tick, col_bell = st.columns([6, 3, 1])
 with col_sym:
     # Warp Search Bar Sync - Streamlit binds this widget to st.session_state['search_input']
     search_query = st.text_input(
@@ -1521,6 +1531,27 @@ with col_sym:
         placeholder="e.g., Narmada, RELIANCE, TCS",
         key="search_input",
     )
+
+with col_bell:
+    st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+    alert_count = len(st.session_state["alert_history"])
+    btn_label = f"🔔 {alert_count}" if alert_count > 0 else "🔔"
+    with st.popover(btn_label, use_container_width=True):
+        st.markdown("**Notification History**")
+        if st.button("Clear All", key="clear_all_alerts", use_container_width=True):
+            st.session_state["alert_history"] = []
+            st.rerun()
+        st.divider()
+        if not st.session_state["alert_history"]:
+            st.info("No new notifications.")
+        else:
+            for alert in st.session_state["alert_history"]:
+                st.markdown(
+                    f"<div style='font-size:0.85rem; margin-bottom: 8px; line-height: 1.2;'>"
+                    f"{alert['icon']} <span style='color:gray;'>{alert['time']}</span><br>"
+                    f"{alert['msg']}</div>",
+                    unsafe_allow_html=True
+                )
 
 # --- 📡 SCAN STATUS HUB — Control Center (above Portfolio/Watchlist, below Search Bar) ---
 hub_placeholder = st.empty()
@@ -1944,7 +1975,7 @@ if not p_df.empty:
                 
                 # If the new active support is higher than the saved trail, ratchet it up!
                 if live_s1 > high_trail:
-                    st.toast(f"🛡️ PROFIT SECURED: Trailing Stop for {clean_ticker} ratcheted UP to ₹{format_indian(live_s1, is_price=True)}!", icon="🛡️")
+                    log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {clean_ticker} ratcheted UP to ₹{format_indian(live_s1, is_price=True)}!", icon="🛡️")
                     p_df.at[idx, "Highest_Trail"] = float(live_s1)
                     high_trail = float(live_s1)
                     p_needs_save = True
@@ -1990,10 +2021,10 @@ if not p_df.empty:
 
                 if "🔴 SELL (Breakdown)" in verdict:
                     total_sell_alerts += 1
-                    st.toast(f"🛑 STOP-LOSS HIT: {clean_ticker} dropped below trailing support. Protect capital!", icon="🛑")
+                    log_alert(f"🛑 STOP-LOSS HIT: {clean_ticker} dropped below trailing support. Protect capital!", icon="🛑")
                 elif "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
                     total_sell_alerts += 1
-                    st.toast(f"⚠️ Portfolio Alert: Momentum weakening on {clean_ticker}", icon="⚠️")
+                    log_alert(f"⚠️ Portfolio Alert: Momentum weakening on {clean_ticker}", icon="⚠️")
 
                 v_rank = 4 if "HOLD" in verdict else 3 if "WATCH" in verdict else 2 if "TRIM" in verdict else 1 if "Exhaustion" in verdict else 0
                 vol_rank = 2 if "Accumulation" in vol_foot else 0 if "DISTRIBUTION" in vol_foot else 1
@@ -2101,7 +2132,7 @@ if not p_df.empty:
                     
                     # 5. Success Notification
                     pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
-                    st.toast(f"✅ Trade Closed! Final PnL: {pnl_icon} {pnl_pct:.2f}% logged to journal.")
+                    log_alert(f"✅ Trade Closed! Final PnL: {pnl_icon} {pnl_pct:.2f}% logged to journal.", icon="✅")
                     time.sleep(1)
                     st.rerun()
 else:
@@ -2174,7 +2205,7 @@ if not w_df.empty:
                     rating_raw = str(row.get("Rating", "AVOID")).upper()
                     if "STRONG BUY" in rating_raw or "🟢 Accumulation" in w_vol_foot:
                         total_buy_alerts += 1
-                        st.toast(f"Watchlist Alert: Strong setup on {clean_ticker}", icon="🔥")
+                        log_alert(f"🔥 Watchlist Alert: Strong setup on {clean_ticker}", icon="🔥")
 
                     display_rows.append({
                         "_idx": idx,
@@ -2278,7 +2309,13 @@ if not w_df.empty:
 else:
     st.info("🔍 Watchlist is empty. Search for a ticker above, then click '➕ Add to Watchlist'.")
 
-# ── Trade Journal & Analytics (Full Width) ───────────────────────────────────
+# ===================================================================
+# BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side Split)
+# ===================================================================
+st.markdown("---")
+render_control_center()
+
+# ── Trade Journal & Analytics (Full Width) ─────────────────────────────────────────────
 st.markdown("---")
 st.subheader("📊 Trade Journal & Analytics")
 
@@ -2322,30 +2359,19 @@ else:
         # 4. Render Historical Ledger
         st.markdown("##### 📜 Historical Ledger")
 
-        # Create a clean display copy
         display_c_df = c_df.copy()
-        # Format currency and percentages
         display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
         display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
         display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
         display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
 
-        # Sort newest closed trades to the top
         display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
-
-        # Render native dataframe
         st.dataframe(display_c_df, use_container_width=True, hide_index=True)
 
     else:
         st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
-
-# ===================================================================
-# BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side Split)
-# ===================================================================
-st.markdown("---")
-render_control_center()
 
 
 # ===================================================================

@@ -1720,10 +1720,20 @@ if search_query:
                     final_qty = manual_qty_input if manual_qty_input > 0 else auto_shares
 
                     if final_qty > 0:
+                        actual_risk = final_qty * risk_per_share
+                        
                         # UI Display (Back to standard metrics)
                         st.subheader("📊 Position Size")
                         r1_c1, r1_c2 = st.columns(2)
-                        r1_c1.metric("Max Risk (1%)", f"₹{format_indian(max_risk)}")
+                        
+                        if manual_qty_input > 0:
+                            risk_diff = actual_risk - max_risk
+                            delta_str = f"{'+' if risk_diff > 0 else ''}{format_indian(risk_diff, is_price=True)} vs 1% Limit"
+                            # delta_color='inverse' makes positive numbers (extra risk) red, which is what we want for risk.
+                            r1_c1.metric("Actual Risk (Override)", f"₹{format_indian(actual_risk, is_price=True)}", delta=delta_str, delta_color="inverse")
+                        else:
+                            r1_c1.metric("Max Risk (1%)", f"₹{format_indian(max_risk, is_price=True)}")
+
                         r1_c2.metric("Risk Per Share", f"₹{format_indian(risk_per_share, is_price=True)}")
                         
                         r2_c1, r2_c2 = st.columns(2)

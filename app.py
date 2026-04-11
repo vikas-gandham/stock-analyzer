@@ -5,6 +5,7 @@ Tech: Streamlit · yfinance · pandas_ta · Plotly · GNews · Gemini Free Tier.
 """
 
 import io
+import os
 import math
 import time
 import pytz
@@ -360,47 +361,68 @@ def get_conn():
 
 
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
-    """Read a worksheet with 3-attempt retry loop and 15s cache backoff."""
-    active_conn = get_conn()
-    if active_conn is None:
-        return pd.DataFrame(columns=columns)
-    
-    for attempt in range(3):
-        try:
-            # Use 15s cache to prevent 429 Quota Exhaustion on reruns
-            df = active_conn.read(worksheet=worksheet, ttl=15)
+    """Hybrid read: Google Sheets primary, local CSV fallback.
+
+    On every successful Sheets read the data is mirrored to a local CSV so
+    the app can keep working even when the Google API is unreachable.
+    """
+    local_filename = f"db_backup_{worksheet}.csv"
+
+    # ── 1. Attempt Primary Read from Google Sheets ──────────────────
+    try:
+        active_conn = get_conn()
+        if active_conn is not None:
+            df = active_conn.read(worksheet=worksheet, ttl="10m")
             if df is None or df.empty:
-                return pd.DataFrame(columns=columns)
-            # Ensure all columns exist
-            df = df.dropna(how="all")
-            for col in columns:
-                if col not in df.columns:
-                    df[col] = None
-            return df[columns]
-        except Exception as e:
-            if attempt < 2:
-                time.sleep(2 ** attempt)
+                df = pd.DataFrame(columns=columns)
             else:
-                if "429" in str(e) or "RATE_LIMIT" in str(e):
-                    # Soft Error: 429 doesn't LOCK the UI
-                    st.toast("⚠️ Google API busy. Using cached data.")
-                else:
-                    # Hard Error: Authentication / Network failure LOCKS the UI
-                    st.cache_resource.clear()
-                    st.session_state["sheets_error"] = True
-                return pd.DataFrame(columns=columns)
+                df = df.dropna(how="all")
+                for col in columns:
+                    if col not in df.columns:
+                        df[col] = None
+                df = df[columns]
+
+            # ── 2. Save a fresh local mirror copy ──────────────────
+            try:
+                df.to_csv(local_filename, index=False)
+            except Exception:
+                pass  # Never let a disk write block the app
+
+            return df
+    except Exception as e:
+        # ── 3. Fallback: Google is down / quota exceeded ────────────
+        try:
+            if os.path.exists(local_filename):
+                st.sidebar.warning(
+                    f"⚠️ Offline Mode: Using local backup for {worksheet}"
+                )
+                return pd.read_csv(local_filename)
+        except Exception:
+            pass
+
+        # Soft 429 toast so the UI doesn't lock
+        if "429" in str(e) or "RATE_LIMIT" in str(e):
+            st.toast("⚠️ Google API busy. Using cached data.")
+        else:
+            st.cache_resource.clear()
+            st.session_state["sheets_error"] = True
+
+    # ── 4. Total Failure: return empty shell with correct columns ───
     return pd.DataFrame(columns=columns)
 
 
 def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
-    """Update a worksheet with 3-attempt retry loop and fallback create."""
+    """Update a worksheet with 3-attempt retry loop, fallback create, and
+    automatic local CSV mirroring after every successful write.
+    """
+    local_filename = f"db_backup_{worksheet}.csv"
     active_conn = get_conn()
     if st.session_state.get("sheets_error") or active_conn is None:
         st.error("⚠️ Cannot save: Google Sheets Connection is currently offline.")
         return
     if df.empty:
         df = pd.DataFrame(columns=columns)
-    
+
     for attempt in range(3):
         try:
             # Try to update first, fallback to create if worksheet missing or error
@@ -411,6 +433,13 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             time.sleep(2)
             # Clear local cache so UI reads the new data immediately
             st.cache_data.clear()
+
+            # ── Auto-Mirror: keep local CSV in sync with Sheets ────
+            try:
+                df.to_csv(local_filename, index=False)
+            except Exception:
+                pass  # Never let a disk write block the app
+
             return
         except Exception as e:
             if attempt < 2:

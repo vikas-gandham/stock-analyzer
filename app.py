@@ -90,6 +90,8 @@ if "alert_history" not in st.session_state:
     st.session_state["alert_history"] = []
 if "seen_alerts" not in st.session_state:
     st.session_state["seen_alerts"] = set()
+if "show_journal" not in st.session_state:
+    st.session_state["show_journal"] = False
 
 def log_alert(msg, icon="🔔"):
     """Logs alert to persistent history and triggers transient toast, with anti-spam."""
@@ -2347,61 +2349,73 @@ else:
 st.markdown("---")
 render_control_center()
 
-# ── Trade Journal & Analytics (Full Width) ─────────────────────────────────────────────
+# ── Trade Journal & Analytics (Toggleable) ─────────────────────────────────────────────
 st.markdown("---")
-st.subheader("📊 Trade Journal & Analytics")
+j_col1, j_col2 = st.columns([0.8, 0.2])
+with j_col1:
+    st.subheader("📊 Trade Journal & Analytics")
+with j_col2:
+    st.markdown("<div style='padding-top: 12px;'></div>", unsafe_allow_html=True)
+    j_label = "Close Journal" if st.session_state["show_journal"] else "Open Journal"
+    if st.button(j_label, use_container_width=True, key="journal_toggle_btn"):
+        st.session_state["show_journal"] = not st.session_state["show_journal"]
+        st.rerun()
 
-if st.session_state.get("sheets_error"):
-    st.error("⚠️ Google Sheets Connection Error: Trade Journal is temporarily unavailable.")
-else:
-    c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
-    c_df = load_sheet_data("ClosedTrades", c_schema)
-
-    if not c_df.empty:
-        # 1. Clean Data for Math
-        c_df["PnL_Value"] = pd.to_numeric(c_df["PnL_Value"], errors='coerce').fillna(0)
-        c_df["PnL_Pct"] = pd.to_numeric(c_df["PnL_Pct"], errors='coerce').fillna(0)
-
-        # 2. Calculate Key Performance Indicators (KPIs)
-        total_trades = len(c_df)
-        winning_trades = len(c_df[c_df["PnL_Pct"] > 0])
-        win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
-
-        net_pnl = c_df["PnL_Value"].sum()
-        avg_return = c_df["PnL_Pct"].mean()
-        best_trade = c_df["PnL_Pct"].max()
-        avg_days = pd.to_numeric(c_df["Days_Held"], errors='coerce').mean()
-
-        # 3. Render Top-Level Metrics
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        a1, a2, a3, a4, a5 = st.columns(5)
-
-        a1.metric("Total Trades", total_trades)
-        a2.metric("Win Rate", f"{win_rate:.1f}%")
-
-        pnl_color = "normal" if net_pnl >= 0 else "inverse"
-        pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
-        a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
-
-        a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
-        a5.metric("Best Trade", f"{best_trade:.2f}%")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # 4. Render Historical Ledger
-        st.markdown("##### 📜 Historical Ledger")
-
-        display_c_df = c_df.copy()
-        display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
-        display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
-        display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-        display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-
-        display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
-        st.dataframe(display_c_df, use_container_width=True, hide_index=True)
-
+# Only execute data loading and rendering if the journal is toggled ON
+if st.session_state["show_journal"]:
+    if st.session_state.get("sheets_error"):
+        st.error("⚠️ Google Sheets Connection Error: Trade Journal is temporarily unavailable.")
     else:
-        st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")
+        c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
+        c_df = load_sheet_data("ClosedTrades", c_schema)
+
+        if not c_df.empty:
+            # 1. Clean Data for Math
+            c_df["PnL_Value"] = pd.to_numeric(c_df["PnL_Value"], errors='coerce').fillna(0)
+            c_df["PnL_Pct"] = pd.to_numeric(c_df["PnL_Pct"], errors='coerce').fillna(0)
+
+            # 2. Calculate Key Performance Indicators (KPIs)
+            total_trades = len(c_df)
+            winning_trades = len(c_df[c_df["PnL_Pct"] > 0])
+            win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
+
+            net_pnl = c_df["PnL_Value"].sum()
+            avg_return = c_df["PnL_Pct"].mean()
+            best_trade = c_df["PnL_Pct"].max()
+            avg_days = pd.to_numeric(c_df["Days_Held"], errors='coerce').mean()
+
+            # 3. Render Top-Level Metrics
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+            a1, a2, a3, a4, a5 = st.columns(5)
+
+            a1.metric("Total Trades", total_trades)
+            a2.metric("Win Rate", f"{win_rate:.1f}%")
+
+            pnl_color = "normal" if net_pnl >= 0 else "inverse"
+            pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
+            a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
+
+            a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
+            a5.metric("Best Trade", f"{best_trade:.2f}%")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # 4. Render Historical Ledger
+            st.markdown("##### 📜 Historical Ledger")
+
+            display_c_df = c_df.copy()
+            display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
+            display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
+            display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+            display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+
+            display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
+            st.dataframe(display_c_df, use_container_width=True, hide_index=True)
+
+        else:
+            st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")
+else:
+    st.info("📂 Click **Open Journal** to load historical analytics and trade history.")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 

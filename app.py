@@ -88,19 +88,25 @@ if "force_top_reload" not in st.session_state:
     st.session_state["force_top_reload"] = False
 if "alert_history" not in st.session_state:
     st.session_state["alert_history"] = []
+if "seen_alerts" not in st.session_state:
+    st.session_state["seen_alerts"] = set()
 
 def log_alert(msg, icon="🔔"):
-    """Logs alert to persistent history and triggers transient toast."""
-    # Enforce full Date and 12-hour Time format
-    now_str = datetime.now(IST).strftime("%d %b %Y, %I:%M %p")
-
+    """Logs alert to persistent history and triggers transient toast, with anti-spam."""
     # Automatically strip duplicate icons from the message string
     clean_msg = msg.replace(icon, "").strip()
 
-    st.session_state["alert_history"].insert(0, {"time": now_str, "msg": clean_msg, "icon": icon})
-    st.session_state["alert_history"] = st.session_state["alert_history"][:50]  # Keep last 50
+    # ANTI-SPAM: Only trigger if we haven't seen this exact message in this session
+    if clean_msg not in st.session_state["seen_alerts"]:
+        now_str = datetime.now(IST).strftime("%d %b %Y, %I:%M %p")
 
-    st.toast(clean_msg, icon=icon)
+        st.session_state["alert_history"].insert(0, {"time": now_str, "msg": clean_msg, "icon": icon})
+        st.session_state["alert_history"] = st.session_state["alert_history"][:50]  # Keep last 50
+
+        # Add to memory cache so it doesn't fire again on the next UI rerun
+        st.session_state["seen_alerts"].add(clean_msg)
+
+        st.toast(clean_msg, icon=icon)
 
 
 

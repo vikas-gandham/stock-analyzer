@@ -37,7 +37,7 @@ st.set_page_config(
     page_title="Stock Market Analysis Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------------
@@ -396,7 +396,7 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
         # ── 3. Fallback: Google is down / quota exceeded ────────────
         try:
             if os.path.exists(local_filename):
-                st.sidebar.warning(
+                st.warning(
                     f"⚠️ Offline Mode: Using local backup for {worksheet}"
                 )
                 df = pd.read_csv(local_filename)

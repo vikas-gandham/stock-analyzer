@@ -268,6 +268,12 @@ def ensure_worksheets_exist(conn):
         except Exception:
             conn.create(worksheet="ScanHistory", data=pd.DataFrame(columns=["Window", "Timestamp", "SignalCount"]))
             
+        # 5. ClosedTrades (Trade Journal)
+        try:
+            conn.read(worksheet="ClosedTrades", ttl=0)
+        except Exception:
+            conn.create(worksheet="ClosedTrades", data=pd.DataFrame(columns=["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]))
+            
     except Exception:
         # Flag error but do not stop the app
         st.session_state["sheets_error"] = True
@@ -1997,6 +2003,10 @@ if not p_df.empty:
                     "_ticker": clean_ticker,
                     "_verdict_rank": v_rank,
                     "_vol_rank": vol_rank,
+                    "_raw_buy_price": buy_price,
+                    "_raw_cmp": cmp,
+                    "_raw_qty": row.get("Quantity", 1),
+                    "_raw_date": row.get("Date_Added", datetime.now(IST).strftime("%Y-%m-%d")),
                     "Ticker": clean_ticker,
                     "Buy_Price": f"₹{format_indian(buy_price, is_price=True)}",
                     "CMP": f"₹{format_indian(cmp, is_price=True)}",
@@ -2031,7 +2041,7 @@ if not p_df.empty:
 
         # 12-column header
         P_COL_LAYOUT = [1.5, 1.1, 1.1, 1.1, 1.2, 1.0, 1.5, 1.2, 1.8, 1.8, 0.9, 0.9]
-        HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "Verdict", "Analyze", "Del"]
+        HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "Verdict", "Analyze", "Close"]
         h_col = st.columns(P_COL_LAYOUT)
         for col, header in zip(h_col, HEADERS):
             col.markdown(f"**{header}**")
@@ -2050,10 +2060,50 @@ if not p_df.empty:
             r_col[8].write(pr["Vol_Foot"])
             r_col[9].markdown(pr["Verdict_HTML"], unsafe_allow_html=True)
             if r_col[10].button("Analyze", key=f"p_an_{pr['_ticker']}_{pr['_idx']}", on_click=set_search_ticker, args=(pr["_ticker"],)): pass
-            if r_col[11].button("🗑️", key=f"p_del_{pr['_ticker']}_{pr['_idx']}"):
-                p_df = p_df.drop(pr["_idx"])
-                save_sheet_data("Portfolio", p_df, p_schema)
-                st.rerun()
+            if r_col[11].button("Log & Close", key=f"p_close_{pr['_ticker']}_{pr['_idx']}"):
+                with st.spinner("Archiving trade..."):
+                    # 1. Load Journal
+                    c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
+                    c_df = load_sheet_data("ClosedTrades", c_schema)
+                    
+                    # 2. Calculate Final Metrics
+                    raw_buy = float(pr["_raw_buy_price"])
+                    raw_sell = float(pr["_raw_cmp"])
+                    raw_qty = float(pr["_raw_qty"])
+                    
+                    buy_date = pd.to_datetime(pr["_raw_date"]).date()
+                    sell_date = datetime.now(IST).date()
+                    days_held = max(0, (sell_date - buy_date).days)
+                    
+                    pnl_val = (raw_sell - raw_buy) * raw_qty
+                    pnl_pct = ((raw_sell - raw_buy) / raw_buy) * 100 if raw_buy > 0 else 0
+                    
+                    # 3. Create Archive Row
+                    new_log = pd.DataFrame([{
+                        "Ticker": pr["Ticker"],
+                        "Buy_Date": buy_date.strftime("%Y-%m-%d"),
+                        "Sell_Date": sell_date.strftime("%Y-%m-%d"),
+                        "Buy_Price": round(raw_buy, 2),
+                        "Sell_Price": round(raw_sell, 2),
+                        "Quantity": raw_qty,
+                        "PnL_Value": round(pnl_val, 2),
+                        "PnL_Pct": round(pnl_pct, 2),
+                        "Exit_State": pr["Vol_Foot"],
+                        "Days_Held": days_held
+                    }])
+                    
+                    # 4. Save to Journal & Remove from Live
+                    c_df = pd.concat([c_df, new_log], ignore_index=True)
+                    save_sheet_data("ClosedTrades", c_df, c_schema)
+                    
+                    p_df = p_df.drop(pr["_idx"])
+                    save_sheet_data("Portfolio", p_df, p_schema)
+                    
+                    # 5. Success Notification
+                    pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
+                    st.toast(f"✅ Trade Closed! Final PnL: {pnl_icon} {pnl_pct:.2f}% logged to journal.")
+                    time.sleep(1)
+                    st.rerun()
 else:
     st.info("🔍 Portfolio is empty. Search for a ticker above, then click '➕ Add to Portfolio'.")
 

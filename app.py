@@ -24,6 +24,9 @@ from gnews import GNews
 from plotly.subplots import make_subplots
 from streamlit_gsheets import GSheetsConnection
 
+# Project root — anchors all file I/O to the directory containing app.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Global Timezone — all timestamps forced to IST
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -366,7 +369,7 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
     On every successful Sheets read the data is mirrored to a local CSV so
     the app can keep working even when the Google API is unreachable.
     """
-    local_filename = f"db_backup_{worksheet}.csv"
+    local_filename = os.path.join(BASE_DIR, f"db_backup_{worksheet}.csv")
 
     # ── 1. Attempt Primary Read from Google Sheets ──────────────────
     try:
@@ -415,7 +418,7 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
     """Update a worksheet with 3-attempt retry loop, fallback create, and
     automatic local CSV mirroring after every successful write.
     """
-    local_filename = f"db_backup_{worksheet}.csv"
+    local_filename = os.path.join(BASE_DIR, f"db_backup_{worksheet}.csv")
     active_conn = get_conn()
     if st.session_state.get("sheets_error") or active_conn is None:
         st.error("⚠️ Cannot save: Google Sheets Connection is currently offline.")
@@ -2397,6 +2400,13 @@ if st.session_state["show_journal"]:
     else:
         c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
         c_df = load_sheet_data("ClosedTrades", c_schema)
+
+        # ── Explicit journal backup anchored to project root ────────
+        try:
+            backup_path = os.path.join(BASE_DIR, "journal_backup_local.csv")
+            c_df.to_csv(backup_path, index=False)
+        except Exception:
+            pass  # Never let a disk write block the UI
 
         if not c_df.empty:
             # 1. Clean Data for Math

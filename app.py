@@ -2403,7 +2403,7 @@ if st.session_state["show_journal"]:
 
         # ── Explicit journal backup anchored to project root ────────
         try:
-            backup_path = os.path.join(BASE_DIR, "journal_backup_local.csv")
+            backup_path = os.path.join(BASE_DIR, "db_backup_Journal_HighRes.csv")
             c_df.to_csv(backup_path, index=False)
         except Exception:
             pass  # Never let a disk write block the UI

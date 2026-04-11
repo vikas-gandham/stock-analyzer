@@ -41,6 +41,12 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# DEBUG: Temporary Path Verification
+# ---------------------------------------------------------------------------
+st.sidebar.code(f"Path: {os.path.join(BASE_DIR, 'db_backup_Portfolio.csv')}")
+st.sidebar.write(f"Exists: {os.path.exists(os.path.join(BASE_DIR, 'db_backup_Portfolio.csv'))}")
+
+# ---------------------------------------------------------------------------
 # BROWSER WARP & SCROLL ANCHOR (Hard-Reload Strategy)
 # ---------------------------------------------------------------------------
 # Hidden Anchor at the very top

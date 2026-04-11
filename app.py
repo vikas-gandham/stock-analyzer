@@ -427,7 +427,9 @@ def background_batch_scan():
                         
                         high_trail = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
                         if not pd.isna(high_trail) and not pd.isna(s1):
-                            p_df.at[idx, "Highest_Trail"] = max(float(s1), high_trail)
+                            if s1 > high_trail:
+                                st.toast(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
+                                p_df.at[idx, "Highest_Trail"] = float(s1)
                 except: pass
 
             save_sheet_data("Portfolio", p_df, p_schema)
@@ -1843,6 +1845,7 @@ p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", 
 p_df = load_sheet_data("Portfolio", p_schema)
 if not p_df.empty:
     port_display_rows = []
+    p_needs_save = False
 
     for idx, row in p_df.iterrows():
         ticker = row["Ticker"]
@@ -1917,7 +1920,15 @@ if not p_df.empty:
 
                 # ── Ratchet Logic ────────────────────────────────────────────
                 live_s1 = p_data["Active_Support"].iloc[-1]
-                current_trail = max(float(live_s1), high_trail)
+                
+                # If the new active support is higher than the saved trail, ratchet it up!
+                if live_s1 > high_trail:
+                    st.toast(f"🛡️ PROFIT SECURED: Trailing Stop for {clean_ticker} ratcheted UP to ₹{format_indian(live_s1, is_price=True)}!", icon="🛡️")
+                    p_df.at[idx, "Highest_Trail"] = float(live_s1)
+                    high_trail = float(live_s1)
+                    p_needs_save = True
+
+                current_trail = high_trail
                 
                 # ── T1: 1:3 R:R Scale-Out Target ────────────────────────────
                 p_risk = buy_price - init_stop
@@ -1956,9 +1967,12 @@ if not p_df.empty:
                     verdict, v_color = "🟢 HOLD", "#00D4AA"
                 verdict_html = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
 
-                if "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
+                if "🔴 SELL (Breakdown)" in verdict:
                     total_sell_alerts += 1
-                    st.toast(f"Portfolio Alert: Action needed on {clean_ticker}", icon="🚨")
+                    st.toast(f"🛑 STOP-LOSS HIT: {clean_ticker} dropped below trailing support. Protect capital!", icon="🛑")
+                elif "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
+                    total_sell_alerts += 1
+                    st.toast(f"⚠️ Portfolio Alert: Momentum weakening on {clean_ticker}", icon="⚠️")
 
                 v_rank = 4 if "HOLD" in verdict else 3 if "WATCH" in verdict else 2 if "TRIM" in verdict else 1 if "Exhaustion" in verdict else 0
                 vol_rank = 2 if "Accumulation" in vol_foot else 0 if "DISTRIBUTION" in vol_foot else 1
@@ -1991,6 +2005,9 @@ if not p_df.empty:
                 })
         except Exception:
             pass
+
+    if p_needs_save:
+        save_sheet_data("Portfolio", p_df, p_schema)
 
     if port_display_rows:
         p_sort = st.selectbox("Sort Portfolio By:", ["Default (Date Added)", "Verdict (Action Needed)", "Volume Footprint"], index=0)

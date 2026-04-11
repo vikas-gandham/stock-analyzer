@@ -41,12 +41,6 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# DEBUG: Temporary Path Verification
-# ---------------------------------------------------------------------------
-st.sidebar.code(f"Path: {os.path.join(BASE_DIR, 'db_backup_Portfolio.csv')}")
-st.sidebar.write(f"Exists: {os.path.exists(os.path.join(BASE_DIR, 'db_backup_Portfolio.csv'))}")
-
-# ---------------------------------------------------------------------------
 # BROWSER WARP & SCROLL ANCHOR (Hard-Reload Strategy)
 # ---------------------------------------------------------------------------
 # Hidden Anchor at the very top
@@ -1591,7 +1585,10 @@ def render_control_center():
 # ===================================================================
 # INITIALIZE SESSION STATE (Moved to top level file)
 
-st.markdown("<h1><span class='icon-3d'>📈</span> Stock Market Analysis Dashboard</h1>", unsafe_allow_html=True)
+st.title("📈 Stock Analyzer Terminal")
+st.info("🔍 DEBUG: Local Backup Status")
+st.code(f"Target Path: {os.path.join(BASE_DIR, 'db_backup_Portfolio.csv')}")
+st.write(f"File Exists on Disk: {os.path.exists(os.path.join(BASE_DIR, 'db_backup_Portfolio.csv'))}")
 
 col_sym, col_tick, col_bell = st.columns([6, 3, 1])
 with col_sym:

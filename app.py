@@ -466,8 +466,6 @@ def background_batch_scan():
                         context_str = str(label).strip()
                         for prefix in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             context_str = context_str.replace(prefix, "")
-                        if "SAFE" in label:
-                            st.toast(f"🚨 Alert: {ticker} is in the Buy Zone!")
                         w_df.at[idx, "Entry Context"] = context_str
 
                         # Trend Strength: t_points out of 2
@@ -553,7 +551,7 @@ def run_scheduled_scan():
                 break
 
 
-def render_status_hub():
+def render_status_hub(placeholder=None, ui_buy_alerts=0, ui_sell_alerts=0):
     """📡 Display high-visibility Scan Status Hub UI."""
     if st.session_state.get("sheets_error") or get_conn() is None:
         # Show verbose offline reason so user can diagnose the connection failure
@@ -622,8 +620,8 @@ def render_status_hub():
         w_df = w_df[w_df["Ticker"].astype(str).str.lower() != "nan"]
 
     # Count Signals
-    sell_alerts = len(p_df[p_df["Signal"] == "🚨 URGENT SELL"]) if not p_df.empty else 0
-    buy_alerts = len(w_df[w_df["Signal"] == "🔥 BUY NOW"]) if not w_df.empty else 0
+    sell_alerts = ui_sell_alerts
+    buy_alerts = ui_buy_alerts
 
     # ── CSS (injected once) ──────────────────────────────────────────
     st.markdown(
@@ -679,28 +677,41 @@ def render_status_hub():
         </div>
     </div>
     """
-    st.markdown(hub_html.replace('\n', ' '), unsafe_allow_html=True)
-
-    # ── Force Scan Button (unique key prevents duplicate-widget error) ──
-    if st.button(
-        "🔄 Force System Scan",
-        key="force_scan_hub_btn",
-        use_container_width=True,
-    ):
-        try:
-            with st.spinner("🚀 Stabilizing Connection..."):
-                time.sleep(1)          # Safety delay — lets prior writes settle
-            background_batch_scan()
-            sync_now = datetime.now(IST).strftime("%I:%M %p IST")
-            new_meta = pd.DataFrame([
-                {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
-                {"Key": "last_sync_actual", "Value": sync_now},
-            ])
-            save_sheet_data("Metadata", new_meta, ["Key", "Value"])
-            st.toast("✅ Manual System Scan Successful!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Force Scan Failed: {e}")
+    if placeholder:
+        with placeholder.container():
+            st.markdown(hub_html.replace('\n', ' '), unsafe_allow_html=True)
+            if st.button("🔄 Force System Scan", key="force_scan_hub_btn", use_container_width=True):
+                try:
+                    with st.spinner("🚀 Stabilizing Connection..."):
+                        time.sleep(1)
+                    background_batch_scan()
+                    sync_now = datetime.now(IST).strftime("%I:%M %p IST")
+                    new_meta = pd.DataFrame([
+                        {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
+                        {"Key": "last_sync_actual", "Value": sync_now},
+                    ])
+                    save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+                    st.toast("✅ Manual System Scan Successful!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Force Scan Failed: {e}")
+    else:
+        st.markdown(hub_html.replace('\n', ' '), unsafe_allow_html=True)
+        if st.button("🔄 Force System Scan", key="force_scan_hub_btn", use_container_width=True):
+            try:
+                with st.spinner("🚀 Stabilizing Connection..."):
+                    time.sleep(1)
+                background_batch_scan()
+                sync_now = datetime.now(IST).strftime("%I:%M %p IST")
+                new_meta = pd.DataFrame([
+                    {"Key": "last_scan_time", "Value": f"{now.strftime('%Y-%m-%d')}_MANUAL"},
+                    {"Key": "last_sync_actual", "Value": sync_now},
+                ])
+                save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+                st.toast("✅ Manual System Scan Successful!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Force Scan Failed: {e}")
 
 
 @st.cache_data(ttl=300)
@@ -1444,10 +1455,9 @@ with col_sym:
     )
 
 # --- 📡 SCAN STATUS HUB — Control Center (above Portfolio/Watchlist, below Search Bar) ---
-try:
-    render_status_hub()
-except Exception as e:
-    st.error(f"⚠️ Status Hub Sync Error: {e}")
+hub_placeholder = st.empty()
+total_buy_alerts = 0
+total_sell_alerts = 0
 
 
 if search_query:
@@ -1900,6 +1910,10 @@ if not p_df.empty:
                     verdict, v_color = "🟢 HOLD", "#00D4AA"
                 verdict_html = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
 
+                if "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
+                    total_sell_alerts += 1
+                    st.toast(f"Portfolio Alert: Action needed on {clean_ticker}", icon="🚨")
+
                 v_rank = 4 if "HOLD" in verdict else 3 if "WATCH" in verdict else 2 if "TRIM" in verdict else 1 if "Exhaustion" in verdict else 0
                 vol_rank = 2 if "Accumulation" in vol_foot else 0 if "DISTRIBUTION" in vol_foot else 1
 
@@ -2028,6 +2042,11 @@ if not w_df.empty:
                     else: w_vol_foot, w_vol_rank = "⚪ Normal", 1
                     
                     cond_val = 0 if "SAFE" in ctx_live else 1 if "FAIR" in ctx_live else 2
+                    
+                    rating_raw = str(row.get("Rating", "AVOID")).upper()
+                    if "STRONG BUY" in rating_raw or "🟢 Accumulation" in w_vol_foot:
+                        total_buy_alerts += 1
+                        st.toast(f"Watchlist Alert: Strong setup on {clean_ticker}", icon="🔥")
 
                     display_rows.append({
                         "_idx": idx,
@@ -2153,3 +2172,8 @@ except Exception as _scan_err:
 st.divider()
 st.caption("Data sourced from Yahoo Finance. News via Google News. System Generated Technical Report. Built with Streamlit.")
 st.caption("⚠️ This tool is for educational purposes only. Not financial advice.")
+
+try:
+    render_status_hub(hub_placeholder, total_buy_alerts, total_sell_alerts)
+except Exception as e:
+    st.error(f"⚠️ Status Hub Sync Error: {e}")

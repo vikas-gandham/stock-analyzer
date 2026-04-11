@@ -1786,13 +1786,7 @@ if st.session_state["sheets_error"]:
 p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
 p_df = load_sheet_data("Portfolio", p_schema)
 if not p_df.empty:
-    # 12-column header
-    P_COL_LAYOUT = [1.5, 1.1, 1.1, 1.1, 1.2, 1.0, 1.5, 1.2, 1.8, 1.8, 0.9, 0.9]
-    HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "Verdict", "Analyze", "Del"]
-    h_col = st.columns(P_COL_LAYOUT)
-    for col, header in zip(h_col, HEADERS):
-        col.markdown(f"**{header}**")
-    st.markdown("---")
+    port_display_rows = []
 
     for idx, row in p_df.iterrows():
         ticker = row["Ticker"]
@@ -1878,9 +1872,6 @@ if not p_df.empty:
                 else:
                     t1_str, t1_color = "N/A", "#AAAAAA"
 
-                # ── Trail Stop = Ratcheted S1 ───────────────────────────────
-                trail_str = f"₹{current_trail:,.2f}"
-
                 # ── % to Stop ────────────────────────────────────────────────
                 pct_to_stop = ((cmp - current_trail) / cmp) * 100 if cmp > 0 else 0
                 if pct_to_stop < 2.0:
@@ -1897,7 +1888,6 @@ if not p_df.empty:
                 vol_ratio = v_ratio
                 
                 # Only trigger URGENT SELL if price is below zone AND volume is high (>0.8x)
-                # If volume is low, it's just a 'Test', not a breakdown.
                 if cmp < stop_zone and vol_ratio > 0.8:
                     verdict, v_color = "🔴 SELL (Breakdown)", "#FF4B4B"
                 elif cmp < stop_zone and vol_ratio <= 0.8:
@@ -1910,34 +1900,68 @@ if not p_df.empty:
                     verdict, v_color = "🟢 HOLD", "#00D4AA"
                 verdict_html = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
 
-                # ── Row Render ───────────────────────────────────────────────
-                r_col = st.columns(P_COL_LAYOUT)
-                r_col[0].write(clean_ticker)
-                r_col[1].write(f"₹{format_indian(buy_price, is_price=True)}")
-                r_col[2].write(f"₹{format_indian(cmp, is_price=True)}")
-                r_col[3].write(f"₹{format_indian(init_stop, is_price=True)}")
-                r_col[4].write(f"₹{format_indian(current_trail, is_price=True)}")
-                r_col[5].markdown(rsi_html, unsafe_allow_html=True)
-                r_col[6].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>₹{format_indian(p_t1 if p_risk > 0 else 0, is_price=True) if p_risk > 0 else 'N/A'}</span>", unsafe_allow_html=True)
-                r_col[7].markdown(pct_html, unsafe_allow_html=True)
-                r_col[8].write(vol_foot)
-                r_col[9].markdown(verdict_html, unsafe_allow_html=True)
-                if r_col[10].button("Analyze", key=f"p_an_{clean_ticker}_{idx}", on_click=set_search_ticker, args=(clean_ticker,)): pass
-                if r_col[11].button("🗑️", key=f"p_del_{clean_ticker}_{idx}"):
-                    p_df = p_df.drop(idx)
-                    save_sheet_data("Portfolio", p_df, p_schema)
-                    st.rerun()
+                v_rank = 4 if "HOLD" in verdict else 3 if "WATCH" in verdict else 2 if "TRIM" in verdict else 1 if "Exhaustion" in verdict else 0
+                vol_rank = 2 if "Accumulation" in vol_foot else 0 if "DISTRIBUTION" in vol_foot else 1
+
+                port_display_rows.append({
+                    "_idx": idx,
+                    "_ticker": clean_ticker,
+                    "_verdict_rank": v_rank,
+                    "_vol_rank": vol_rank,
+                    "Ticker": clean_ticker,
+                    "Buy_Price": f"₹{format_indian(buy_price, is_price=True)}",
+                    "CMP": f"₹{format_indian(cmp, is_price=True)}",
+                    "Init_Stop": f"₹{format_indian(init_stop, is_price=True)}",
+                    "Trail_Stop": f"₹{format_indian(current_trail, is_price=True)}",
+                    "RSI_HTML": rsi_html,
+                    "T1_HTML": f"<span style='color:{t1_color}; font-weight:bold;'>₹{format_indian(p_t1 if p_risk > 0 else 0, is_price=True) if p_risk > 0 else 'N/A'}</span>",
+                    "PCT_HTML": pct_html,
+                    "Vol_Foot": vol_foot,
+                    "Verdict_HTML": verdict_html
+                })
             else:
-                r_col = st.columns(P_COL_LAYOUT)
-                r_col[0].write(f"⚠️ {clean_ticker}")
-                for i in range(1, 10): r_col[i].write("N/A")
-                r_col[10].write("")  # Empty space for Analyze
-                if r_col[11].button("🗑️", key=f"p_del_err_{clean_ticker}_{idx}"):
-                    p_df = p_df.drop(idx)
-                    save_sheet_data("Portfolio", p_df, p_schema)
-                    st.rerun()
+                port_display_rows.append({
+                    "_idx": idx,
+                    "_ticker": clean_ticker,
+                    "_verdict_rank": -1,
+                    "_vol_rank": -1,
+                    "Ticker": f"⚠️ {clean_ticker}",
+                    "Buy_Price": "N/A", "CMP": "N/A", "Init_Stop": "N/A", "Trail_Stop": "N/A",
+                    "RSI_HTML": "N/A", "T1_HTML": "N/A", "PCT_HTML": "N/A", "Vol_Foot": "N/A", "Verdict_HTML": "N/A"
+                })
         except Exception:
-            st.error(f"Error processing {clean_ticker}")
+            pass
+
+    if port_display_rows:
+        p_sort = st.selectbox("Sort Portfolio By:", ["Default (Date Added)", "Verdict (Action Needed)", "Volume Footprint"], index=0)
+        if "Verdict" in p_sort: port_display_rows.sort(key=lambda x: x.get("_verdict_rank", -1))
+        elif "Volume" in p_sort: port_display_rows.sort(key=lambda x: x.get("_vol_rank", -1), reverse=True)
+
+        # 12-column header
+        P_COL_LAYOUT = [1.5, 1.1, 1.1, 1.1, 1.2, 1.0, 1.5, 1.2, 1.8, 1.8, 0.9, 0.9]
+        HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "Verdict", "Analyze", "Del"]
+        h_col = st.columns(P_COL_LAYOUT)
+        for col, header in zip(h_col, HEADERS):
+            col.markdown(f"**{header}**")
+        st.markdown("---")
+
+        for pr in port_display_rows:
+            r_col = st.columns(P_COL_LAYOUT)
+            r_col[0].write(pr["Ticker"])
+            r_col[1].write(pr["Buy_Price"])
+            r_col[2].write(pr["CMP"])
+            r_col[3].write(pr["Init_Stop"])
+            r_col[4].write(pr["Trail_Stop"])
+            r_col[5].markdown(pr["RSI_HTML"], unsafe_allow_html=True)
+            r_col[6].markdown(pr["T1_HTML"], unsafe_allow_html=True)
+            r_col[7].markdown(pr["PCT_HTML"], unsafe_allow_html=True)
+            r_col[8].write(pr["Vol_Foot"])
+            r_col[9].markdown(pr["Verdict_HTML"], unsafe_allow_html=True)
+            if r_col[10].button("Analyze", key=f"p_an_{pr['_ticker']}_{pr['_idx']}", on_click=set_search_ticker, args=(pr["_ticker"],)): pass
+            if r_col[11].button("🗑️", key=f"p_del_{pr['_ticker']}_{pr['_idx']}"):
+                p_df = p_df.drop(pr["_idx"])
+                save_sheet_data("Portfolio", p_df, p_schema)
+                st.rerun()
 else:
     st.info("🔍 Portfolio is empty. Search for a ticker above, then click '➕ Add to Portfolio'.")
 
@@ -1994,35 +2018,60 @@ if not w_df.empty:
                     f_w = fetch_fundamentals(clean_ticker)
                     score_w, t_pts_w, v_pts_w, s_pts_w, f_pts_w, str_pts_w, sma_pts_w, def_pts_w = calculate_master_score(w_data, f_w)
                     stop_loss_live = round(w_s1 * 0.98, 2)
+                    
+                    w_vol = w_data["Volume"].iloc[-1]
+                    w_vol20 = w_data["Vol_20SMA"].iloc[-1] if not pd.isna(w_data["Vol_20SMA"].iloc[-1]) and w_data["Vol_20SMA"].iloc[-1] > 0 else 1
+                    w_v_ratio = w_vol / w_vol20
+                    w_is_green = w_cmp >= w_data["Open"].iloc[-1]
+                    if w_v_ratio >= 1.5 and w_is_green: w_vol_foot, w_vol_rank = "🟢 Accumulation", 2
+                    elif w_v_ratio >= 1.5 and not w_is_green: w_vol_foot, w_vol_rank = "🔴 DISTRIBUTION", 0
+                    else: w_vol_foot, w_vol_rank = "⚪ Normal", 1
+                    
+                    cond_val = 0 if "SAFE" in ctx_live else 1 if "FAIR" in ctx_live else 2
 
                     display_rows.append({
                         "_idx": idx,
                         "_ticker": clean_ticker,
+                        "_rating_rank": score_w,
+                        "_trend_rank": t_pts_w,
+                        "_ctx_risk": cond_val,
+                        "_vol_rank": w_vol_rank,
                         "Ticker": clean_ticker,
                         "Price": f"₹{format_indian(w_cmp, is_price=True)}",
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": ctx_live,
                         "Trend": f"{t_pts_w}/2",
                         "Stop Loss": f"₹{format_indian(stop_loss_live, is_price=True)}",
+                        "Vol Footprint": w_vol_foot,
                     })
                 else:
                     display_rows.append({
                         "_idx": idx,
                         "_ticker": clean_ticker,
+                        "_rating_rank": -1,
+                        "_trend_rank": -1,
+                        "_ctx_risk": 99,
+                        "_vol_rank": -1,
                         "Ticker": f"⚠️ {clean_ticker}",
                         "Price": "N/A",
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": "N/A",
                         "Trend": "N/A",
                         "Stop Loss": "N/A",
+                        "Vol Footprint": "N/A",
                     })
             except Exception:
                 st.error(f"Error processing {clean_ticker}")
 
     if display_rows:
-        # ── 8-column layout: data + inline Analyze / Delete buttons ────────
-        COL_LAYOUT = [2, 1.5, 1.5, 2, 1.5, 2, 1, 1]
-        HEADERS = ["Ticker", "Price", "Stop Loss", "Entry Context", "Trend", "Rating", "Analyze", "Delete"]
+        w_sort = st.selectbox("Sort Watchlist By:", ["Default (None)", "Rating (Strongest First)", "Entry Context (Lowest Risk)", "Trend Strength", "Volume Footprint"], index=0)
+        if "Rating" in w_sort: display_rows.sort(key=lambda x: x.get("_rating_rank", -1), reverse=True)
+        elif "Context" in w_sort: display_rows.sort(key=lambda x: x.get("_ctx_risk", 99))
+        elif "Trend" in w_sort: display_rows.sort(key=lambda x: x.get("_trend_rank", -1), reverse=True)
+        elif "Volume" in w_sort: display_rows.sort(key=lambda x: x.get("_vol_rank", -1), reverse=True)
+        
+        COL_LAYOUT = [1.5, 1.2, 1.2, 1.5, 1.0, 1.5, 1.5, 1, 1]
+        HEADERS = ["Ticker", "Price", "Stop Loss", "Entry Context", "Trend", "Rating", "Volume", "Analyze", "Del"]
 
         # Header row
         h_cols = st.columns(COL_LAYOUT)
@@ -2069,9 +2118,10 @@ if not w_df.empty:
             r_cols[3].markdown(ctx_html, unsafe_allow_html=True)
             r_cols[4].markdown(trend_html, unsafe_allow_html=True)
             r_cols[5].markdown(rating_html, unsafe_allow_html=True)
-            if r_cols[6].button("Analyze", key=f"ana_w_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
+            r_cols[6].write(dr["Vol Footprint"])
+            if r_cols[7].button("Analyze", key=f"ana_w_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
-            if r_cols[7].button("🗑️", key=f"del_w_{dr['_ticker']}_{dr['_idx']}"):
+            if r_cols[8].button("🗑️", key=f"del_w_{dr['_ticker']}_{dr['_idx']}"):
                 w_df = w_df.drop(dr["_idx"])
                 w_df["Rating"] = w_df["Rating"].astype(str).replace(
                     {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}

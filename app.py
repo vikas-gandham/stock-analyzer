@@ -2278,6 +2278,69 @@ if not w_df.empty:
 else:
     st.info("🔍 Watchlist is empty. Search for a ticker above, then click '➕ Add to Watchlist'.")
 
+# ── Trade Journal & Analytics (Full Width) ───────────────────────────────────
+st.markdown("---")
+st.subheader("📊 Trade Journal & Analytics")
+
+if st.session_state.get("sheets_error"):
+    st.error("⚠️ Google Sheets Connection Error: Trade Journal is temporarily unavailable.")
+else:
+    c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
+    c_df = load_sheet_data("ClosedTrades", c_schema)
+
+    if not c_df.empty:
+        # 1. Clean Data for Math
+        c_df["PnL_Value"] = pd.to_numeric(c_df["PnL_Value"], errors='coerce').fillna(0)
+        c_df["PnL_Pct"] = pd.to_numeric(c_df["PnL_Pct"], errors='coerce').fillna(0)
+
+        # 2. Calculate Key Performance Indicators (KPIs)
+        total_trades = len(c_df)
+        winning_trades = len(c_df[c_df["PnL_Pct"] > 0])
+        win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
+
+        net_pnl = c_df["PnL_Value"].sum()
+        avg_return = c_df["PnL_Pct"].mean()
+        best_trade = c_df["PnL_Pct"].max()
+        avg_days = pd.to_numeric(c_df["Days_Held"], errors='coerce').mean()
+
+        # 3. Render Top-Level Metrics
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        a1, a2, a3, a4, a5 = st.columns(5)
+
+        a1.metric("Total Trades", total_trades)
+        a2.metric("Win Rate", f"{win_rate:.1f}%")
+
+        pnl_color = "normal" if net_pnl >= 0 else "inverse"
+        pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
+        a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
+
+        a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
+        a5.metric("Best Trade", f"{best_trade:.2f}%")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # 4. Render Historical Ledger
+        st.markdown("##### 📜 Historical Ledger")
+
+        # Create a clean display copy
+        display_c_df = c_df.copy()
+        # Format currency and percentages
+        display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
+        display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
+        display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+        display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+
+        # Sort newest closed trades to the top
+        display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
+
+        # Render native dataframe
+        st.dataframe(display_c_df, use_container_width=True, hide_index=True)
+
+    else:
+        st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")
+
+st.markdown("<br><br>", unsafe_allow_html=True)
+
 # ===================================================================
 # BATCH ENGINE — Persistent Bottom Layer (Optimized Side-by-Side Split)
 # ===================================================================

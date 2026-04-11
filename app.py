@@ -1705,30 +1705,30 @@ if search_query:
                 st.session_state["capital_ext"] = capital
                 entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
                 stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
+                manual_qty_input = st.number_input("Manual Quantity (Optional)", min_value=0, value=0, step=1, key="manual_qty_input")
 
             with c_pos:
                 if entry_price > stop_loss:
                     max_risk = capital * 0.01
                     risk_per_share = entry_price - stop_loss
-                    suggested_shares = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
-                    if suggested_shares > 0:
+                    
+                    # Calculate the auto 1% suggestion
+                    auto_shares = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
+                    
+                    # Determine which quantity to show and use
+                    # Use manual entry if user typed something, otherwise use auto
+                    final_qty = manual_qty_input if manual_qty_input > 0 else auto_shares
+
+                    if final_qty > 0:
+                        # UI Display (Back to standard metrics)
                         st.subheader("📊 Position Size")
-                        # Row 1: Max Risk & Risk Per Share
                         r1_c1, r1_c2 = st.columns(2)
                         r1_c1.metric("Max Risk (1%)", f"₹{format_indian(max_risk)}")
                         r1_c2.metric("Risk Per Share", f"₹{format_indian(risk_per_share, is_price=True)}")
                         
-                        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                        
-                        # Row 2: Shares & Capital Deployed
                         r2_c1, r2_c2 = st.columns(2)
-                        # Use a container to align the input with the metric next to it
-                        with r2_c1:
-                            # This is the editable field that defaults to the 1% suggestion
-                            final_shares = st.number_input("Shares to Buy (Edit)", min_value=0, value=int(suggested_shares), step=1, key="manual_qty_final")
-                        
-                        # Recalculate based on whatever is in the final_shares box
-                        actual_deployed = final_shares * entry_price
+                        r2_c1.metric("Shares to Buy", f"{final_qty:,}")
+                        actual_deployed = final_qty * entry_price
                         r2_c2.metric("Capital Deployed", f"₹{format_indian(actual_deployed, is_price=True)}")
                         
                         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
@@ -1747,7 +1747,7 @@ if search_query:
                                     "Buy_Price": entry_price,
                                     "Initial_Stop": stop_loss,
                                     "Highest_Trail": stop_loss,
-                                    "Quantity": final_shares,
+                                    "Quantity": final_qty,
                                     "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
                                 }])
                                 p_df = pd.concat([p_df, new_trade], ignore_index=True)

@@ -453,12 +453,20 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         s1 = df["Active_Support"].iloc[-1]
-                        
+                        cmp_bg = df["Close"].iloc[-1]
+
                         high_trail = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
                         if not pd.isna(high_trail) and not pd.isna(s1):
                             if s1 > high_trail:
                                 log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
                                 p_df.at[idx, "Highest_Trail"] = float(s1)
+
+                        # Stop-loss alert: price under trailing stop zone on high volume
+                        stop_zone = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
+                        vol_surge = df["Volume"].iloc[-1] / (df["Vol_20SMA"].iloc[-1] if "Vol_20SMA" in df.columns and df["Vol_20SMA"].iloc[-1] > 0 else 1)
+                        if cmp_bg < stop_zone and vol_surge >= 1.5:
+                            log_alert(f"🛑 STOP-LOSS HIT: {ticker} dropped below trailing support.", icon="🛑")
+
                 except: pass
 
             save_sheet_data("Portfolio", p_df, p_schema)
@@ -491,6 +499,15 @@ def background_batch_scan():
                         else:
                             w_rating = "AVOID"
                         w_df.at[idx, "Rating"] = w_rating
+
+                        # Watchlist alert: fire from background scanner only
+                        vol_bg = latest.get("Volume", 1)
+                        vol20_bg = latest.get("Vol_20SMA", 1) or 1
+                        vr_bg = vol_bg / vol20_bg
+                        is_green_bg = latest.get("Close", 0) >= latest.get("Open", 0)
+                        vol_foot_bg = "🟢 Accumulation" if vr_bg >= 1.5 and is_green_bg else ""
+                        if w_rating == "STRONG BUY" or "🟢 Accumulation" in vol_foot_bg:
+                            log_alert(f"🔥 Watchlist Alert: Strong setup on {ticker}", icon="🔥")
 
                         # Entry Context: stripped label text (e.g. SAFE, FAIR, OVEREXTENDED)
                         # Strip leading emoji/color indicator
@@ -1926,7 +1943,6 @@ p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", 
 p_df = load_sheet_data("Portfolio", p_schema)
 if not p_df.empty:
     port_display_rows = []
-    p_needs_save = False
 
     for idx, row in p_df.iterrows():
         ticker = row["Ticker"]
@@ -2000,16 +2016,9 @@ if not p_df.empty:
                     vol_foot = "⚪ Normal"
 
                 # ── Ratchet Logic ────────────────────────────────────────────
+                # UI is READ-ONLY: read Highest_Trail from sheet, compute display value only.
                 live_s1 = p_data["Active_Support"].iloc[-1]
-                
-                # If the new active support is higher than the saved trail, ratchet it up!
-                if live_s1 > high_trail:
-                    log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {clean_ticker} ratcheted UP to ₹{format_indian(live_s1, is_price=True)}!", icon="🛡️")
-                    p_df.at[idx, "Highest_Trail"] = float(live_s1)
-                    high_trail = float(live_s1)
-                    p_needs_save = True
-
-                current_trail = high_trail
+                current_trail = max(float(live_s1), high_trail)
                 
                 # ── T1: 1:3 R:R Scale-Out Target ────────────────────────────
                 p_risk = buy_price - init_stop
@@ -2050,10 +2059,8 @@ if not p_df.empty:
 
                 if "🔴 SELL (Breakdown)" in verdict:
                     total_sell_alerts += 1
-                    log_alert(f"🛑 STOP-LOSS HIT: {clean_ticker} dropped below trailing support. Protect capital!", icon="🛑")
                 elif "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
                     total_sell_alerts += 1
-                    log_alert(f"⚠️ Portfolio Alert: Momentum weakening on {clean_ticker}", icon="⚠️")
 
                 v_rank = 4 if "HOLD" in verdict else 3 if "WATCH" in verdict else 2 if "TRIM" in verdict else 1 if "Exhaustion" in verdict else 0
                 vol_rank = 2 if "Accumulation" in vol_foot else 0 if "DISTRIBUTION" in vol_foot else 1
@@ -2090,9 +2097,6 @@ if not p_df.empty:
                 })
         except Exception:
             pass
-
-    if p_needs_save:
-        save_sheet_data("Portfolio", p_df, p_schema)
 
     if port_display_rows:
         p_sort = st.selectbox("Sort Portfolio By:", ["Default (Date Added)", "Verdict (Action Needed)", "Volume Footprint"], index=0)
@@ -2234,7 +2238,6 @@ if not w_df.empty:
                     rating_raw = str(row.get("Rating", "AVOID")).upper()
                     if "STRONG BUY" in rating_raw or "🟢 Accumulation" in w_vol_foot:
                         total_buy_alerts += 1
-                        log_alert(f"🔥 Watchlist Alert: Strong setup on {clean_ticker}", icon="🔥")
 
                     display_rows.append({
                         "_idx": idx,

@@ -1710,23 +1710,26 @@ if search_query:
                 if entry_price > stop_loss:
                     max_risk = capital * 0.01
                     risk_per_share = entry_price - stop_loss
-                    suggested_shares = math.floor(max_risk / risk_per_share)
+                    suggested_shares = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
                     if suggested_shares > 0:
                         st.subheader("📊 Position Size")
                         # Row 1: Max Risk & Risk Per Share
                         r1_c1, r1_c2 = st.columns(2)
-                        r1_c1.metric("Max Risk (1%)", f"₹{max_risk:,.2f}")
-                        r1_c2.metric("Risk Per Share", f"₹{risk_per_share:,.2f}")
+                        r1_c1.metric("Max Risk (1%)", f"₹{format_indian(max_risk)}")
+                        r1_c2.metric("Risk Per Share", f"₹{format_indian(risk_per_share, is_price=True)}")
                         
-                        st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
+                        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                         
                         # Row 2: Shares & Capital Deployed
                         r2_c1, r2_c2 = st.columns(2)
+                        # Use a container to align the input with the metric next to it
                         with r2_c1:
-                            final_shares = st.number_input("Shares to Buy (Editable)", min_value=0, value=int(suggested_shares), step=1, key="manual_qty_override")
-                        actual_deployed = final_shares * entry_price
+                            # This is the editable field that defaults to the 1% suggestion
+                            final_shares = st.number_input("Shares to Buy (Edit)", min_value=0, value=int(suggested_shares), step=1, key="manual_qty_final")
                         
-                        r2_c2.metric("Capital Deployed", f"₹{actual_deployed:,.2f}")
+                        # Recalculate based on whatever is in the final_shares box
+                        actual_deployed = final_shares * entry_price
+                        r2_c2.metric("Capital Deployed", f"₹{format_indian(actual_deployed, is_price=True)}")
                         
                         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                         

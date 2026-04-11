@@ -91,11 +91,17 @@ if "alert_history" not in st.session_state:
 
 def log_alert(msg, icon="🔔"):
     """Logs alert to persistent history and triggers transient toast."""
-    # Updated to show full Date and Time in IST
+    # Enforce full Date and 12-hour Time format
     now_str = datetime.now(IST).strftime("%d %b %Y, %I:%M %p")
-    st.session_state["alert_history"].insert(0, {"time": now_str, "msg": msg, "icon": icon})
+
+    # Automatically strip duplicate icons from the message string
+    clean_msg = msg.replace(icon, "").strip()
+
+    st.session_state["alert_history"].insert(0, {"time": now_str, "msg": clean_msg, "icon": icon})
     st.session_state["alert_history"] = st.session_state["alert_history"][:50]  # Keep last 50
-    st.toast(msg, icon=icon)
+
+    st.toast(clean_msg, icon=icon)
+
 
 
 # ---------------------------------------------------------------------------

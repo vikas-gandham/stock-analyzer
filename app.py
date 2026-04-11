@@ -176,9 +176,14 @@ def format_indian(n, is_price=False):
     else:
         last_three = s[-3:]
         remaining = s[:-3]
-        import re
-        remaining = re.sub(r'(\d+?)(?=(\d{2})+$)', r'\1,', remaining)
-        res = f"{remaining},{last_three}"
+        
+        parts = []
+        while len(remaining) > 0:
+            parts.append(remaining[-2:])
+            remaining = remaining[:-2]
+            
+        parts.reverse()
+        res = ",".join(parts) + "," + last_three
         
     if is_price:
         decimal_part = f"{n:.2f}".split('.')[1]
@@ -1311,8 +1316,8 @@ def render_control_center():
                             results.append({
                                 "Select": False,
                                 "Ticker": t_sym,
-                                "Price": round(b_close, 2),
-                                "Support1": round(b_sup1, 2),
+                                "Price": format_indian(round(b_close, 2), is_price=True),
+                                "Support1": format_indian(round(b_sup1, 2), is_price=True),
                                 "Risk to Stop %": round(risk_pct, 2),
                                 "Safety Score": b_score,
                                 "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
@@ -1893,12 +1898,12 @@ if not p_df.empty:
                 # ── Row Render ───────────────────────────────────────────────
                 r_col = st.columns(P_COL_LAYOUT)
                 r_col[0].write(clean_ticker)
-                r_col[1].write(f"₹{buy_price:,.2f}")
-                r_col[2].write(f"₹{cmp:,.2f}")
-                r_col[3].write(f"₹{init_stop:,.2f}")
-                r_col[4].write(trail_str)
+                r_col[1].write(f"₹{format_indian(buy_price, is_price=True)}")
+                r_col[2].write(f"₹{format_indian(cmp, is_price=True)}")
+                r_col[3].write(f"₹{format_indian(init_stop, is_price=True)}")
+                r_col[4].write(f"₹{format_indian(current_trail, is_price=True)}")
                 r_col[5].markdown(rsi_html, unsafe_allow_html=True)
-                r_col[6].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>{t1_str}</span>", unsafe_allow_html=True)
+                r_col[6].markdown(f"<span style='color:{t1_color}; font-weight:bold;'>₹{format_indian(p_t1 if p_risk > 0 else 0, is_price=True) if p_risk > 0 else 'N/A'}</span>", unsafe_allow_html=True)
                 r_col[7].markdown(pct_html, unsafe_allow_html=True)
                 r_col[8].write(vol_foot)
                 r_col[9].markdown(verdict_html, unsafe_allow_html=True)
@@ -1979,11 +1984,11 @@ if not w_df.empty:
                         "_idx": idx,
                         "_ticker": clean_ticker,
                         "Ticker": clean_ticker,
-                        "Price": f"₹{w_cmp:,.2f}",
+                        "Price": f"₹{format_indian(w_cmp, is_price=True)}",
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": ctx_live,
                         "Trend": f"{t_pts_w}/2",
-                        "Stop Loss": f"₹{stop_loss_live:,.2f}",
+                        "Stop Loss": f"₹{format_indian(stop_loss_live, is_price=True)}",
                     })
                 else:
                     display_rows.append({

@@ -579,7 +579,7 @@ def render_status_hub(placeholder=None, ui_buy_alerts=0, ui_sell_alerts=0):
     meta_df = load_sheet_data("Metadata", ["Key", "Value"])
     p_df = load_sheet_data("Portfolio", ["Ticker", "Signal"])
     w_df = load_sheet_data("Watchlist", ["Ticker", "Signal"])
-    nifty_price, nifty_pct = fetch_nifty_baseline()
+    nifty_price, nifty_pct, n_sma20, n_sma50 = fetch_nifty_baseline()
 
     # Defaults
     now = datetime.now(IST)
@@ -652,9 +652,16 @@ def render_status_hub(placeholder=None, ui_buy_alerts=0, ui_sell_alerts=0):
         f"<div class='status-val'>Triggered at {sync_time}</div>"
     )
     
+    if nifty_price > n_sma20:
+        mkt_state, mkt_color = "🟢 BULLISH", "#00D4AA"
+    elif nifty_price > n_sma50:
+        mkt_state, mkt_color = "🟡 CAUTION", "#FFD700"
+    else:
+        mkt_state, mkt_color = "🔴 BEARISH", "#FF4B4B"
+
     nifty_color = "#00D4AA" if nifty_pct >= 0 else "#FF4B4B"
     macro_block = (
-        f"<div class='status-header'>📈 NIFTY 50</div>"
+        f"<div class='status-header'>📈 NIFTY 50 • <span style='color:{mkt_color}; font-weight:bold;'>{mkt_state}</span></div>"
         f"<div class='status-val'>{nifty_price:,.2f} <span style='color: {nifty_color}; font-size: 0.85rem;'>({nifty_pct:+.2f}%)</span></div>"
     )
 
@@ -717,17 +724,25 @@ def render_status_hub(placeholder=None, ui_buy_alerts=0, ui_sell_alerts=0):
 
 
 @st.cache_data(ttl=300)
-def fetch_nifty_baseline() -> tuple[float, float]:
-    """Fetch recent Nifty 50 (^NSEI) data and return (last_close, pct_change)."""
+def fetch_nifty_baseline() -> tuple[float, float, float, float]:
+    """Fetch recent Nifty 50 (^NSEI) data and return (last_close, pct_change, sma20, sma50)."""
     try:
-        nifty = yf.download("^NSEI", period="5d", interval="1d", progress=False, auto_adjust=True)
-        if nifty.empty: return 0.0, 0.0
+        nifty = yf.download("^NSEI", period="3mo", interval="1d", progress=False, auto_adjust=True, multi_level_index=False)
+        if nifty.empty: return 0.0, 0.0, 0.0, 0.0
+        
+        if isinstance(nifty.columns, pd.MultiIndex):
+            nifty.columns = nifty.columns.get_level_values(0)
+            
         latest_close = float(nifty["Close"].iloc[-1])
         prev_close = float(nifty["Close"].iloc[-2]) if len(nifty) > 1 else latest_close
         pct_change = ((latest_close - prev_close) / prev_close) * 100
-        return round(latest_close, 2), round(pct_change, 2)
+        
+        sma20 = nifty["Close"].rolling(window=20).mean().iloc[-1]
+        sma50 = nifty["Close"].rolling(window=50).mean().iloc[-1]
+        
+        return round(latest_close, 2), round(pct_change, 2), float(sma20) if not pd.isna(sma20) else 0.0, float(sma50) if not pd.isna(sma50) else 0.0
     except Exception:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0
 
 
 @st.cache_data(ttl=900)

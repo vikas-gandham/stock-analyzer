@@ -399,7 +399,12 @@ def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
                 st.sidebar.warning(
                     f"⚠️ Offline Mode: Using local backup for {worksheet}"
                 )
-                return pd.read_csv(local_filename)
+                df = pd.read_csv(local_filename)
+                # Ensure all requested columns exist
+                for col in columns:
+                    if col not in df.columns:
+                        df[col] = None
+                return df[columns]
         except Exception:
             pass
 
@@ -2219,9 +2224,12 @@ w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
 
 # Purge nan ghost data from legacy Rating values
 if not w_df.empty:
-    w_df["Rating"] = w_df["Rating"].astype(str).replace(
-        {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
-    )
+    if 'Rating' in w_df.columns:
+        w_df["Rating"] = w_df["Rating"].astype(str).replace(
+            {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
+        )
+    else:
+        w_df["Rating"] = "AVOID"
 
 if not w_df.empty:
     # ── Live-refresh live metrics per row, then render styled table ──────

@@ -90,8 +90,9 @@ if "alert_history" not in st.session_state:
     st.session_state["alert_history"] = []
 
 def log_alert(msg, icon="🔔"):
-    """Logs alert to persistent notification history and triggers transient toast."""
-    now_str = datetime.now(IST).strftime("%H:%M:%S")
+    """Logs alert to persistent history and triggers transient toast."""
+    # Updated to show full Date and Time in IST
+    now_str = datetime.now(IST).strftime("%d %b %Y, %I:%M %p")
     st.session_state["alert_history"].insert(0, {"time": now_str, "msg": msg, "icon": icon})
     st.session_state["alert_history"] = st.session_state["alert_history"][:50]  # Keep last 50
     st.toast(msg, icon=icon)
@@ -1545,13 +1546,29 @@ with col_bell:
         if not st.session_state["alert_history"]:
             st.info("No new notifications.")
         else:
-            for alert in st.session_state["alert_history"]:
-                st.markdown(
-                    f"<div style='font-size:0.85rem; margin-bottom: 8px; line-height: 1.2;'>"
-                    f"{alert['icon']} <span style='color:gray;'>{alert['time']}</span><br>"
-                    f"{alert['msg']}</div>",
-                    unsafe_allow_html=True
-                )
+            # Enforce a scrollable view area
+            with st.container(height=350, border=False):
+                for i, alert in enumerate(st.session_state["alert_history"]):
+                    # Create a padded, bordered card for each alert
+                    with st.container(border=True):
+                        # Align the text and the clear button vertically
+                        c_text, c_del = st.columns([0.85, 0.15], vertical_alignment="center")
+
+                        with c_text:
+                            # Date/Time on top (no icon), Message on bottom
+                            st.markdown(
+                                f"<div style='line-height: 1.4;'>"
+                                f"<span style='color:gray; font-size:0.75rem;'>{alert['time']}</span><br>"
+                                f"<span style='font-size:0.9rem;'>{alert['icon']} {alert['msg']}</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+
+                        with c_del:
+                            # Individual clear button
+                            if st.button("✖", key=f"del_al_{i}", help="Dismiss"):
+                                st.session_state["alert_history"].pop(i)
+                                st.rerun()
 
 # --- 📡 SCAN STATUS HUB — Control Center (above Portfolio/Watchlist, below Search Bar) ---
 hub_placeholder = st.empty()

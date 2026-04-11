@@ -1710,9 +1710,8 @@ if search_query:
                 if entry_price > stop_loss:
                     max_risk = capital * 0.01
                     risk_per_share = entry_price - stop_loss
-                    shares_to_buy = math.floor(max_risk / risk_per_share)
-                    total_deployed = shares_to_buy * entry_price
-                    if shares_to_buy > 0:
+                    suggested_shares = math.floor(max_risk / risk_per_share)
+                    if suggested_shares > 0:
                         st.subheader("📊 Position Size")
                         # Row 1: Max Risk & Risk Per Share
                         r1_c1, r1_c2 = st.columns(2)
@@ -1723,8 +1722,11 @@ if search_query:
                         
                         # Row 2: Shares & Capital Deployed
                         r2_c1, r2_c2 = st.columns(2)
-                        r2_c1.metric("Shares to Buy", f"{shares_to_buy:,}")
-                        r2_c2.metric("Capital Deployed", f"₹{total_deployed:,.2f}")
+                        with r2_c1:
+                            final_shares = st.number_input("Shares to Buy (Editable)", min_value=0, value=int(suggested_shares), step=1, key="manual_qty_override")
+                        actual_deployed = final_shares * entry_price
+                        
+                        r2_c2.metric("Capital Deployed", f"₹{actual_deployed:,.2f}")
                         
                         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                         
@@ -1742,7 +1744,7 @@ if search_query:
                                     "Buy_Price": entry_price,
                                     "Initial_Stop": stop_loss,
                                     "Highest_Trail": stop_loss,
-                                    "Quantity": shares_to_buy,
+                                    "Quantity": final_shares,
                                     "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
                                 }])
                                 p_df = pd.concat([p_df, new_trade], ignore_index=True)
@@ -1750,7 +1752,7 @@ if search_query:
                                 st.success(f"Added {clean_p} to Portfolio!")
                                 st.rerun()
                             
-                        if total_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
+                        if actual_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
                 else: st.error("Entry Price must be greater than Stop-Loss Price.")
 
             st.divider()

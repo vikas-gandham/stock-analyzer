@@ -423,7 +423,7 @@ def background_batch_scan():
                     df = fetch_ohlcv(ticker)
                     if not df.empty:
                         df = compute_indicators(df)
-                        s1 = df["Support_1"].iloc[-1]
+                        s1 = df["Active_Support"].iloc[-1]
                         
                         high_trail = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
                         if not pd.isna(high_trail) and not pd.isna(s1):
@@ -445,7 +445,7 @@ def background_batch_scan():
                         score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
-                        support_val = df["Support_1"].iloc[-1]
+                        support_val = df["Active_Support"].iloc[-1]
 
                         # Price
                         w_df.at[idx, "Price"] = round(float(latest["Close"]), 2)
@@ -471,7 +471,7 @@ def background_batch_scan():
                         # Trend Strength: t_points out of 2
                         w_df.at[idx, "Trend Strength"] = f"{t_pts}/2"
 
-                        # Stop Loss: 2% below Support_1
+                        # Stop Loss: 2% below Active_Support
                         w_df.at[idx, "Stop Loss"] = round(support_val * 0.98, 2)
                 except: pass
 
@@ -792,6 +792,23 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["SUPPORT_1"] = (2 * pivot) - w_high
         df["RESISTANCE_1"] = (2 * pivot) - w_low
         
+        # S2/R2
+        df["SUPPORT_2"] = pivot - (w_high - w_low)
+        df["RESISTANCE_2"] = pivot + (w_high - w_low)
+
+        # Polarity Engine
+        df["ACTIVE_SUPPORT"] = df["SUPPORT_1"]
+        df["ACTIVE_RESISTANCE"] = df["RESISTANCE_1"]
+        df["POLARITY_STATE"] = "RANGE"
+
+        df.loc[df["CLOSE"] > df["RESISTANCE_1"], "ACTIVE_SUPPORT"] = df["RESISTANCE_1"]
+        df.loc[df["CLOSE"] > df["RESISTANCE_1"], "ACTIVE_RESISTANCE"] = df["RESISTANCE_2"]
+        df.loc[df["CLOSE"] > df["RESISTANCE_1"], "POLARITY_STATE"] = "BREAKOUT"
+
+        df.loc[df["CLOSE"] < df["SUPPORT_1"], "ACTIVE_RESISTANCE"] = df["SUPPORT_1"]
+        df.loc[df["CLOSE"] < df["SUPPORT_1"], "ACTIVE_SUPPORT"] = df["SUPPORT_2"]
+        df.loc[df["CLOSE"] < df["SUPPORT_1"], "POLARITY_STATE"] = "BREAKDOWN"
+        
         s_level = df["SUPPORT_1"].iloc[-1]
         # Count how many times price came within 1% of S1 in the last 20 days
         touches = ((df["LOW"].iloc[-21:-1] >= s_level * 0.99) & 
@@ -809,6 +826,11 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["PIVOT"] = last_close
         df["SUPPORT_1"] = last_close
         df["RESISTANCE_1"] = last_close
+        df["SUPPORT_2"] = last_close
+        df["RESISTANCE_2"] = last_close
+        df["ACTIVE_SUPPORT"] = last_close
+        df["ACTIVE_RESISTANCE"] = last_close
+        df["POLARITY_STATE"] = "RANGE"
         df["S1_STRENGTH"] = 0
         df["R1_STRENGTH"] = 0
         
@@ -819,6 +841,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns={
         'CLOSE': 'Close', 'HIGH': 'High', 'LOW': 'Low', 'OPEN': 'Open', 'VOLUME': 'Volume',
         'PIVOT': 'Pivot', 'SUPPORT_1': 'Support_1', 'RESISTANCE_1': 'Resistance_1',
+        'SUPPORT_2': 'Support_2', 'RESISTANCE_2': 'Resistance_2',
+        'ACTIVE_SUPPORT': 'Active_Support', 'ACTIVE_RESISTANCE': 'Active_Resistance',
+        'POLARITY_STATE': 'Polarity_State',
         'VOL_20SMA': 'Vol_20SMA', 'S1_STRENGTH': 'S1_Strength', 'R1_STRENGTH': 'R1_Strength'
     })
     
@@ -921,15 +946,31 @@ def build_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     )
 
     # Support / Resistance / Pivot horizontal lines
-    support_val = df["Support_1"].iloc[-1]
-    resistance_val = df["Resistance_1"].iloc[-1]
+    support_val = df["Active_Support"].iloc[-1]
+    resistance_val = df["Active_Resistance"].iloc[-1]
     pivot_val = df["Pivot"].iloc[-1]
+    s2_val = df["Support_2"].iloc[-1]
+    r2_val = df["Resistance_2"].iloc[-1]
 
+    fig.add_hline(
+        y=s2_val,
+        line_dash="dot",
+        line_color="rgba(139,0,0,0.5)",
+        annotation_text=f"S2 ₹{s2_val:,.2f}",
+        row=1, col=1,
+    )
+    fig.add_hline(
+        y=r2_val,
+        line_dash="dot",
+        line_color="rgba(0,128,128,0.5)",
+        annotation_text=f"R2 ₹{r2_val:,.2f}",
+        row=1, col=1,
+    )
     fig.add_hline(
         y=support_val,
         line_dash="dot",
         line_color="#FF6B6B",
-        annotation_text=f"Support ₹{support_val:,.2f}",
+        annotation_text=f"Active Support ₹{support_val:,.2f}",
         row=1,
         col=1,
     )
@@ -937,7 +978,7 @@ def build_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
         y=resistance_val,
         line_dash="dot",
         line_color="#4ECDC4",
-        annotation_text=f"Resistance ₹{resistance_val:,.2f}",
+        annotation_text=f"Active Resistance ₹{resistance_val:,.2f}",
         row=1,
         col=1,
     )
@@ -1002,14 +1043,18 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0, wick_ratio=0, low_price=0):
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0, wick_ratio=0, low_price=0, polarity_state="RANGE"):
     bullets = []
     
+    if polarity_state == "BREAKOUT":
+        bullets.append({"type": "success", "msg": "🔄 **Polarity Shift (Breakout):** Price has broken prior resistance. Old resistance is now your new Active Support floor."})
+
     if sma_pts == 1:
         bullets.append({"type": "success", "msg": "🚀 **Launchpad Position:** Stock is trading within 10% of its 50-DMA with positive momentum. This is a high-probability 'Ignition Zone' for early swing trades."})
 
     if wick_ratio > 1.5 and low_price < support:
         bullets.append({"type": "success", "msg": "🛡️ **Bear Trap Detected:** Price dipped below support but buyers aggressively drove it back up (Long lower wick). This is a high-conviction sign of institutional defense."})
+
 
     # 1. Risk/Reward (The Swing Trader's Holy Grail)
     risk = price - support
@@ -1152,8 +1197,8 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     """Calculate the 11-point Master Rating score."""
     if df.empty: return 0, 0, 0, 0, 0, 0, 0, 0
     latest = df.iloc[-1]
-    support_val = df["Support_1"].iloc[-1]
-    resistance_val = df["Resistance_1"].iloc[-1]
+    support_val = df["Active_Support"].iloc[-1]
+    resistance_val = df["Active_Resistance"].iloc[-1]
     
     # 1. Safety Score
     s_points = 0
@@ -1202,7 +1247,7 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
 
     # 6. Support Defense (Bear Trap / Divergence)
     defense_pts = 0
-    s1_calc = latest['Support_1'] if 'Support_1' in df.columns else latest['Close']
+    s1_calc = latest['Active_Support'] if 'Active_Support' in df.columns else latest['Close']
     if latest['Close'] < s1_calc * 1.05:
         if latest.get('RSI_Rising', False) or latest.get('Wick_Ratio', 0) > 1.5:
             defense_pts = 1
@@ -1223,8 +1268,8 @@ def get_market_condition(df):
     
     # 2. Risk - Structure
     close = df['Close'].iloc[-1]
-    s1 = df['Support_1'].iloc[-1]
-    r1 = df['Resistance_1'].iloc[-1]
+    s1 = df['Active_Support'].iloc[-1]
+    r1 = df['Active_Resistance'].iloc[-1]
     
     # Calc Risk Percentage
     if r1 > s1:
@@ -1290,8 +1335,8 @@ def render_control_center():
                         try:
                             b_df = compute_indicators(b_df)
                             b_close = b_df["Close"].iloc[-1]
-                            b_sup1 = b_df["Support_1"].iloc[-1]
-                            b_res1 = b_df["Resistance_1"].iloc[-1]
+                            b_sup1 = b_df["Active_Support"].iloc[-1]
+                            b_res1 = b_df["Active_Resistance"].iloc[-1]
                             risk_pct = ((b_close - b_sup1) / b_close) * 100
                             
                             if b_res1 > b_sup1:
@@ -1527,8 +1572,8 @@ if search_query:
             prev_close = df["Close"].iloc[-2] if len(df) >= 2 else latest["Close"]
             day_change = latest["Close"] - prev_close
             day_change_pct = (day_change / prev_close) * 100
-            support_val = df["Support_1"].iloc[-1]
-            resistance_val = df["Resistance_1"].iloc[-1]
+            support_val = df["Active_Support"].iloc[-1]
+            resistance_val = df["Active_Resistance"].iloc[-1]
             week52_high = df["High"].max()
             week52_low = df["Low"].min()
             ideal_entry = support_val * 1.012  # 1.2% above S1 to confirm the bounce
@@ -1686,7 +1731,8 @@ if search_query:
                 r_strength=df["R1_Strength"].iloc[-1] if "R1_Strength" in df.columns else 0,
                 sma_pts=sma_pts,
                 wick_ratio=df['Wick_Ratio'].iloc[-1] if 'Wick_Ratio' in df.columns else 0,
-                low_price=latest['Low']
+                low_price=latest['Low'],
+                polarity_state=df["Polarity_State"].iloc[-1] if "Polarity_State" in df.columns else "RANGE"
             )
             
             for alert in alerts:
@@ -1870,7 +1916,7 @@ if not p_df.empty:
                     vol_foot = "⚪ Normal"
 
                 # ── Ratchet Logic ────────────────────────────────────────────
-                live_s1 = p_data["Support_1"].iloc[-1]
+                live_s1 = p_data["Active_Support"].iloc[-1]
                 current_trail = max(float(live_s1), high_trail)
                 
                 # ── T1: 1:3 R:R Scale-Out Target ────────────────────────────
@@ -2024,7 +2070,7 @@ if not w_df.empty:
                 if not w_data.empty:
                     w_data = compute_indicators(w_data)
                     w_cmp = w_data['Close'].iloc[-1]
-                    w_s1 = w_data['Support_1'].iloc[-1]
+                    w_s1 = w_data['Active_Support'].iloc[-1]
                     w_label, _, _ = get_market_condition(w_data)
                     ctx_live = str(w_label).strip()
                     for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:

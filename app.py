@@ -163,6 +163,28 @@ st.markdown(
 # DATA HELPERS & SANITIZATION
 # ===================================================================
 
+def format_indian(n, is_price=False):
+    """Formats a number into the Indian numbering system (Lakhs/Crores)."""
+    if pd.isna(n) or n == 0: return "0.00" if is_price else "0"
+    
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    
+    s = str(int(n))
+    if len(s) <= 3: 
+        res = s
+    else:
+        last_three = s[-3:]
+        remaining = s[:-3]
+        import re
+        remaining = re.sub(r'(\d+?)(?=(\d{2})+$)', r'\1,', remaining)
+        res = f"{remaining},{last_three}"
+        
+    if is_price:
+        decimal_part = f"{n:.2f}".split('.')[1]
+        return f"{sign}{res}.{decimal_part}"
+    return f"{sign}{res}"
+
 def sanitize_ticker(ticker: str) -> str:
     """Correct common typos and map aliases for Indian stocks."""
     if not ticker or not isinstance(ticker, str):
@@ -1501,15 +1523,24 @@ if search_query:
             
 
             # --- Metrics Row ---
+            is_indian = full_ticker.endswith(".NS") or full_ticker.endswith(".BO")
+            
+            def fmt_price(val):
+                return f"₹{format_indian(val, is_price=True)}" if is_indian else f"₹{val:,.2f}"
+
+            def fmt_delta(val):
+                if not is_indian: return f"{val:+,.2f}"
+                return f"+{format_indian(val, is_price=True)}" if val >= 0 else format_indian(val, is_price=True)
+
             c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
-            c1.metric("Current Price", f"₹{latest['Close']:,.2f}")
-            c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=f"{day_change:+,.2f}")
-            c3.metric("Ideal Entry (Bounce)", f"₹{ideal_entry:,.2f}")
-            c4.metric("Support (S1)", f"₹{support_val:,.2f}")
-            c5.metric("Auto Stop (Zone)", f"₹{ideal_stop:,.2f}")
-            c6.metric("Resistance (R1)", f"₹{resistance_val:,.2f}")
-            c7.metric("52W High", f"₹{week52_high:,.2f}")
-            c8.metric("52W Low", f"₹{week52_low:,.2f}")
+            c1.metric("Current Price", fmt_price(latest['Close']))
+            c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=fmt_delta(day_change))
+            c3.metric("Ideal Entry (Bounce)", fmt_price(ideal_entry))
+            c4.metric("Support (S1)", fmt_price(support_val))
+            c5.metric("Auto Stop (Zone)", fmt_price(ideal_stop))
+            c6.metric("Resistance (R1)", fmt_price(resistance_val))
+            c7.metric("52W High", fmt_price(week52_high))
+            c8.metric("52W Low", fmt_price(week52_low))
 
             # --- Fundamental health ---
             vol_today_raw = latest.get("Volume", 1)
@@ -1527,8 +1558,8 @@ if search_query:
             h1.metric("Market Cap", mcap_str)
             h2.metric("ROCE (Efficiency)", f"{roce:.2f}%")
             h3.metric("Debt-to-Equity", f"{debt_to_equity:.2f}")
-            h4.metric("Current Volume", f"{int(vol_today_raw):,}", delta=f"{vol_diff:,.0f} vs Avg")
-            h5.metric("20-Day Avg Vol", f"{int(vol_20sma_raw):,}")
+            h4.metric("Current Volume", format_indian(vol_today_raw), delta=f"{format_indian(vol_diff)} vs Avg")
+            h5.metric("20-Day Avg Vol", format_indian(vol_20sma_raw))
             if v_ratio_raw >= 1.5 and is_green:
                 surge_label = "🔥 Inst. Accumulation"
                 surge_color = "normal"       # renders green ↑

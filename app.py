@@ -1586,9 +1586,6 @@ def render_control_center():
 # INITIALIZE SESSION STATE (Moved to top level file)
 
 st.title("📈 Stock Analyzer Terminal")
-st.info("🔍 DEBUG: Local Backup Status")
-st.code(f"Target Path: {os.path.join(BASE_DIR, 'db_backup_Portfolio.csv')}")
-st.write(f"File Exists on Disk: {os.path.exists(os.path.join(BASE_DIR, 'db_backup_Portfolio.csv'))}")
 
 col_sym, col_tick, col_bell = st.columns([6, 3, 1])
 with col_sym:

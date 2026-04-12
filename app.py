@@ -1447,39 +1447,30 @@ def render_control_center():
                             else:
                                 b_score = 50
 
-                            is_buy = (b_sup1 <= b_close <= b_sup1 * 1.05)
-                            m_score = 0
-                            if b_score <= 30: m_score += 2
-                            elif b_score <= 60: m_score += 1
-                            
-                            b_adx = b_df["ADX"].iloc[-1] if not pd.isna(b_df["ADX"].iloc[-1]) else 0
-                            if b_adx >= 50: m_score += 2
-                            elif b_adx >= 25: m_score += 1
-                            
-                            b_vol = b_df["Volume"].iloc[-1]
-                            b_vol20 = b_df["Vol_20SMA"].iloc[-1]
-                            if pd.isna(b_vol20) or b_vol20 == 0: b_vol20 = 1
-                            v_ratio = b_vol / b_vol20
-                            # Direction-aware: only award points on a green (accumulation) candle
-                            is_b_green = b_df["Close"].iloc[-1] >= b_df["Open"].iloc[-1]
-                            if v_ratio >= 1.5 and is_b_green: m_score += 2
-                            elif v_ratio >= 1.0 and is_b_green: m_score += 1
-                            # Red candle + high volume = Distribution → 0 points
+                            # 1. Get Context (Centralized Logic)
+                            b_label, _, _ = get_market_condition(b_df)
+                            ctx_clean = str(b_label).strip()
+                            for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
+                                ctx_clean = ctx_clean.replace(pfx, "")
 
-                            if m_score >= 5: m_rating = "🟢 STRONG BUY"
-                            elif m_score >= 3: m_rating = "🔵 MODERATE BUY"
-                            elif m_score >= 1: m_rating = "🟡 HOLD"
-                            else: m_rating = "🔴 AVOID"
+                            # 2. Get Fundamentals & Master Score
+                            b_funda = fetch_fundamentals(t_sym)
+                            m_score, t_pts, _, _, _, _, _, _ = calculate_master_score(b_df, b_funda)
+
+                            # 3. Determine Standard Rating
+                            if m_score >= 7: m_rating = "STRONG BUY"
+                            elif m_score >= 5: m_rating = "MODERATE BUY"
+                            elif m_score >= 3: m_rating = "WATCHLIST / HOLD"
+                            else: m_rating = "AVOID"
 
                             results.append({
-                                "Select": False,
                                 "Ticker": t_sym,
                                 "Price": format_indian(round(b_close, 2), is_price=True),
-                                "Support1": format_indian(round(b_sup1, 2), is_price=True),
-                                "Risk to Stop %": round(risk_pct, 2),
-                                "Safety Score": b_score,
-                                "Buyable": "🟩 BUYABLE" if is_buy else "⬛ NO",
-                                "Master Rating": m_rating
+                                "Support": format_indian(round(b_sup1, 2), is_price=True),
+                                "Entry Context": ctx_clean,
+                                "Trend": f"{t_pts}/2",
+                                "Rating": m_rating,
+                                "Risk to Stop %": round(risk_pct, 2)
                             })
                         except:
                             continue
@@ -1562,22 +1553,42 @@ def render_control_center():
         b_results = st.session_state["batch_results"]
         if not b_results.empty:
             # Header — wider ratios for full-screen display
-            bh_col = st.columns([3, 1.5, 1.5, 1.5, 2.5, 2])
+            # Header
+            B_COL_RATIOS = [1.5, 1, 1.2, 1.5, 1, 1.5, 1.2]
+            bh_col = st.columns(B_COL_RATIOS)
             bh_col[0].markdown("**Ticker**")
             bh_col[1].markdown("**Price**")
             bh_col[2].markdown("**Support**")
-            bh_col[3].markdown("**Safety**")
-            bh_col[4].markdown("**Rating**")
-            bh_col[5].markdown("**Action**")
+            bh_col[3].markdown("**Entry Context**")
+            bh_col[4].markdown("**Trend**")
+            bh_col[5].markdown("**Rating**")
+            bh_col[6].markdown("**Action**")
 
             for idx, row in b_results.iterrows():
-                rb_col = st.columns([3, 1.5, 1.5, 1.5, 2.5, 2])
+                # ── Color Logic (Unified with Watchlist) ──
+                # 1. Rating
+                r_str = str(row["Rating"]).upper()
+                r_color = "#00d26a" if "BUY" in r_str else "#fbd63f" if ("HOLD" in r_str or "WATCHLIST" in r_str) else "#f7556a"
+                r_html = f"<span style='color:{r_color}; font-weight:bold;'>{row['Rating']}</span>"
+                
+                # 2. Context
+                c_str = str(row["Entry Context"]).upper()
+                c_color = "#00d26a" if "SAFE" in c_str else "#fbd63f" if "FAIR" in c_str else "#f7556a"
+                c_html = f"<span style='color:{c_color}; font-weight:bold;'>{c_str}</span>"
+                
+                # 3. Trend
+                t_str = str(row["Trend"]).upper()
+                t_color = "#00d26a" if ("2/2" in t_str or "BULL" in t_str) else "#fbd63f" if "1/2" in t_str else "#f7556a"
+                t_html = f"<span style='color:{t_color}; font-weight:bold;'>{t_str}</span>"
+
+                rb_col = st.columns(B_COL_RATIOS)
                 rb_col[0].write(row["Ticker"])
                 rb_col[1].write(f"₹{row['Price']}")
-                rb_col[2].write(f"₹{row['Support1']}")
-                rb_col[3].write(row["Safety Score"])
-                rb_col[4].write(row["Master Rating"])
-                if rb_col[5].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}", on_click=set_search_ticker, args=(row["Ticker"],)):
+                rb_col[2].write(f"₹{row['Support']}")
+                rb_col[3].markdown(c_html, unsafe_allow_html=True)
+                rb_col[4].markdown(t_html, unsafe_allow_html=True)
+                rb_col[5].markdown(r_html, unsafe_allow_html=True)
+                if rb_col[6].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}", on_click=set_search_ticker, args=(row["Ticker"],)):
                     pass
         else:
             st.info("❌ No stocks passed the scan.")

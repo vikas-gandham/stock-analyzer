@@ -149,16 +149,6 @@ st.markdown(
         text-shadow: 2px 2px 4px rgba(0,0,0,0.4);
         margin-right: 0.2rem;
     }
-    .analyst-badge {
-        font-size: 0.9rem;
-        background-color: #333;
-        color: #fff;
-        padding: 0.2rem 0.5rem;
-        border-radius: 0.5rem;
-        vertical-align: middle;
-        margin-left: 10px;
-        opacity: 0.8;
-    }
     .earnings-warning {
         background: linear-gradient(135deg, #ff4b4b, #cc0000);
         color: white;
@@ -1275,13 +1265,6 @@ def get_company_name(ticker: str) -> str:
         return ticker
 
 
-def get_analyst_rating(ticker: str) -> Optional[str]:
-    """Retrieve the recommendation key from yfinance."""
-    try:
-        info = yf.Ticker(ticker).info
-        return info.get("recommendationKey")
-    except Exception:
-        return None
 
 
 @st.cache_data(ttl=3600)
@@ -1767,12 +1750,7 @@ if search_query:
             roce = funda["roce"]
             debt_to_equity = funda["debt_to_equity"]
 
-        analyst_rec = get_analyst_rating(full_ticker)
-        if analyst_rec:
-            analyst_str = str(analyst_rec).replace("_", " ").title()
-            st.markdown(f"<h3>{company_name} <span class='analyst-badge'>Analyst Consensus: {analyst_str}</span></h3>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3>{company_name}</h3>", unsafe_allow_html=True)
 
         try:
             latest = df.iloc[-1]

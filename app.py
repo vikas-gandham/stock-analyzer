@@ -1779,13 +1779,25 @@ if search_query:
                 if not is_indian: return f"{val:+,.2f}"
                 return f"+{format_indian(val, is_price=True)}" if val >= 0 else format_indian(val, is_price=True)
 
+            polarity_state = df["Polarity_State"].iloc[-1] if "Polarity_State" in df.columns else "RANGE"
+            
+            if polarity_state == "BREAKOUT":
+                s_label, s_delta = "Support (Old R1)", f"S2: {fmt_price(s2_val)}"
+                r_label, r_delta = "Resist. (R2 Target)", "Blue Sky Breakout"
+            elif polarity_state == "BREAKDOWN":
+                s_label, s_delta = "Support (S2 Level)", "Freefall Watch"
+                r_label, r_delta = "Resist. (Old S1)", f"R2: {fmt_price(r2_val)}"
+            else:
+                s_label, s_delta = "Support (S1)", f"S2: {fmt_price(s2_val)}"
+                r_label, r_delta = "Resist. (R1)", f"R2: {fmt_price(r2_val)}"
+
             c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
             c1.metric("Current Price", fmt_price(latest['Close']))
             c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=fmt_delta(day_change))
             c3.metric("Ideal Entry (Bounce)", fmt_price(ideal_entry))
-            c4.metric("Support (S1 | S2)", fmt_price(support_val), delta=f"S2: {fmt_price(s2_val)}", delta_color="normal")
+            c4.metric(s_label, fmt_price(support_val), delta=s_delta, delta_color="normal")
             c5.metric("Auto Stop (Zone)", fmt_price(ideal_stop))
-            c6.metric("Resist. (R1 | R2)", fmt_price(resistance_val), delta=f"R2: {fmt_price(r2_val)}", delta_color="normal")
+            c6.metric(r_label, fmt_price(resistance_val), delta=r_delta, delta_color="normal")
             c7.metric("52W High", fmt_price(week52_high))
             c8.metric("52W Low", fmt_price(week52_low))
 

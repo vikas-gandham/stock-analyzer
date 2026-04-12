@@ -1475,7 +1475,7 @@ def render_control_center():
                             if not w_df_batch.empty and t_sym in w_df_batch["Ticker"].values:
                                 b_val_b = str(w_df_batch[w_df_batch["Ticker"] == t_sym]["Badge"].iloc[0]).upper()
                             
-                            is_special_b = (b_val_b == "STAR") or (t_sym == "KMCSHPR.NS") or (t_sym == "KMCSHIL.BO")
+                            is_special_b = (b_val_b == "STAR")
                             display_ticker_b = f"{t_sym} 🏆" if is_special_b else t_sym
 
                             results.append({
@@ -2330,7 +2330,7 @@ if not w_df.empty:
 
                     # ── Special Badge Logic ──
                     b_val_w = str(row.get("Badge", "")).upper()
-                    is_special_w = (b_val_w == "STAR") or (clean_ticker == "KMCSHPR.NS") or (clean_ticker == "KMCSHIL.BO")
+                    is_special_w = (b_val_w == "STAR")
                     display_ticker_w = f"{clean_ticker} 🏆" if is_special_w else clean_ticker
 
                     display_rows.append({

@@ -1470,6 +1470,7 @@ def render_control_center():
                                 "Entry Context": ctx_clean,
                                 "Trend": f"{t_pts}/2",
                                 "Rating": m_rating,
+                                "_rating_rank": m_score,
                                 "Risk to Stop %": round(risk_pct, 2)
                             })
                         except:
@@ -1477,7 +1478,7 @@ def render_control_center():
                     
                     progress_text.empty()
                     if results:
-                        st.session_state["batch_results"] = pd.DataFrame(results).sort_values("Risk to Stop %")
+                        st.session_state["batch_results"] = pd.DataFrame(results).sort_values(by="_rating_rank", ascending=False)
                         st.success(f"✅ Success: {len(results)} stocks matched your criteria.")
                     else:
                         st.error("❌ No stocks passed the scan.")

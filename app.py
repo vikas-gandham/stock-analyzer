@@ -274,13 +274,13 @@ def ensure_worksheets_exist(conn):
         try:
             conn.read(worksheet="Watchlist", ttl=0)
         except Exception:
-            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]))
+            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]))
         
         # 2. Portfolio
         try:
             conn.read(worksheet="Portfolio", ttl=0)
         except Exception:
-            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]))
+            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]))
 
         # 3. Metadata (Tracking Scans)
         try:
@@ -482,7 +482,7 @@ def background_batch_scan():
 
     with st.spinner("🚀 Running Automated Market Scan..."):
         # 1. Portfolio Scan
-        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
+        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
         p_df = load_sheet_data("Portfolio", p_schema)
         if not p_df.empty:
             for idx, row in p_df.iterrows():
@@ -491,27 +491,79 @@ def background_batch_scan():
                     df = fetch_ohlcv(ticker)
                     if not df.empty:
                         df = compute_indicators(df)
+                        funda = fetch_fundamentals(ticker)
+                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(df, funda)
+                        
                         s1 = df["Active_Support"].iloc[-1]
-                        cmp_bg = df["Close"].iloc[-1]
+                        cmp_val = df["Close"].iloc[-1]
+                        buy_price = float(row.get("Buy_Price", 0))
+                        init_stop = float(row.get("Initial_Stop", buy_price * 0.9))
+                        high_trail = float(row.get("Highest_Trail", init_stop))
+                        
+                        # ── Ratchet Logic ────────────
+                        if not pd.isna(s1) and s1 > high_trail:
+                            log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
+                            high_trail = float(s1)
+                            p_df.at[idx, "Highest_Trail"] = high_trail
 
-                        high_trail = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
-                        if not pd.isna(high_trail) and not pd.isna(s1):
-                            if s1 > high_trail:
-                                log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
-                                p_df.at[idx, "Highest_Trail"] = float(s1)
-
-                        # Stop-loss alert: price under trailing stop zone on high volume
-                        stop_zone = float(row.get("Highest_Trail", row.get("Initial_Stop", 0)))
-                        vol_surge = df["Volume"].iloc[-1] / (df["Vol_20SMA"].iloc[-1] if "Vol_20SMA" in df.columns and df["Vol_20SMA"].iloc[-1] > 0 else 1)
-                        if cmp_bg < stop_zone and vol_surge >= 1.5:
-                            log_alert(f"🛑 STOP-LOSS HIT: {ticker} dropped below trailing support.", icon="🛑")
+                        # ── UI Data Generation ────────────
+                        # 1. Price
+                        p_df.at[idx, "CMP"] = round(float(cmp_val), 2)
+                        
+                        # 2. RSI HTML
+                        rsi_vals = ta.rsi(df['Close'], length=14)
+                        rsi = rsi_vals.iloc[-1] if not rsi_vals.empty and not pd.isna(rsi_vals.iloc[-1]) else 50
+                        rsi_str = f"{rsi:.1f}"
+                        if rsi >= 70: rsi_html = f"<span style='color:#FF4B4B; font-weight:bold;'>{rsi_str} (OB)</span>"
+                        elif rsi <= 30: rsi_html = f"<span style='color:#00D4AA; font-weight:bold;'>{rsi_str} (OS)</span>"
+                        else: rsi_html = f"<span style='color:#AAAAAA;'>{rsi_str}</span>"
+                        p_df.at[idx, "RSI_HTML"] = rsi_html
+                        
+                        # 3. Vol Footprint
+                        vol_today = df["Volume"].iloc[-1]
+                        vol_20sma = df["Vol_20SMA"].iloc[-1] if not pd.isna(df["Vol_20SMA"].iloc[-1]) and df["Vol_20SMA"].iloc[-1] > 0 else 1
+                        v_ratio = vol_today / vol_20sma
+                        is_green = cmp_val >= df["Open"].iloc[-1]
+                        if v_ratio >= 1.5 and is_green: vol_foot, vol_rank = "🟢 Accumulation", 2
+                        elif v_ratio >= 1.5 and not is_green: vol_foot, vol_rank = "🔴 DISTRIBUTION", 0
+                        else: vol_foot, vol_rank = "⚪ Normal", 1
+                        p_df.at[idx, "Vol_Foot"] = vol_foot
+                        p_df.at[idx, "_vol_rank"] = vol_rank
+                        
+                        # 4. T1 Target
+                        p_risk = buy_price - init_stop
+                        if p_risk > 0:
+                            p_t1 = buy_price + (p_risk * 3)
+                            t1_color = "#00D4AA" if cmp_val >= p_t1 else "#AAAAAA"
+                            t1_html = f"<span style='color:{t1_color}; font-weight:bold;'>₹{format_indian(p_t1, is_price=True)}</span>"
+                        else: t1_html = "N/A"
+                        p_df.at[idx, "T1_HTML"] = t1_html
+                        
+                        # 5. % to Stop
+                        pct_to_stop = ((cmp_val - high_trail) / cmp_val) * 100 if cmp_val > 0 else 0
+                        pct_color = "#FF4B4B" if pct_to_stop < 2.0 else "#FFD700" if pct_to_stop < 5.0 else "#00D4AA"
+                        p_df.at[idx, "PCT_HTML"] = f"<span style='color:{pct_color}; font-weight:bold;'>{pct_to_stop:.1f}%</span>"
+                        
+                        # 6. Verdict
+                        stop_zone = high_trail * 0.99
+                        if cmp_val < stop_zone and v_ratio > 0.8: verdict, v_color, v_rank = "🔴 SELL (Breakdown)", "#FF4B4B", 0
+                        elif cmp_val < stop_zone and v_ratio <= 0.8: verdict, v_color, v_rank = "🟡 WATCH (Low Vol Test)", "#FFD700", 3
+                        elif v_ratio >= 1.5 and not is_green and rsi > 65: verdict, v_color, v_rank = "🔴 SELL (Exhaustion)", "#FF4B4B", 1
+                        elif score < 4: verdict, v_color, v_rank = "🟡 TRIM (Weakening)", "#FFD700", 2
+                        else: verdict, v_color, v_rank = "🟢 HOLD", "#00D4AA", 4
+                        p_df.at[idx, "Verdict_HTML"] = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
+                        p_df.at[idx, "_verdict_rank"] = v_rank
+                        
+                        if "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
+                            log_alert(f"⚠️ PORTFOLIO ALERT: {verdict} on {ticker}", icon="🚨")
 
                 except: pass
 
             save_sheet_data("Portfolio", p_df, p_schema)
 
         # 2. Watchlist Scan
-        w_df = load_sheet_data("Watchlist", ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"])
+        w_schema = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+        w_df = load_sheet_data("Watchlist", w_schema)
         if not w_df.empty:
             for idx, row in w_df.iterrows():
                 try:
@@ -523,50 +575,44 @@ def background_batch_scan():
                         score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
-                        support_val = df["Active_Support"].iloc[-1]
+                        support_val = latest.get("Active_Support", latest["Close"])
 
                         # Price
                         w_df.at[idx, "Price"] = round(float(latest["Close"]), 2)
 
-                        # Rating: clean text, no emojis
-                        if score >= 7:
-                            w_rating = "STRONG BUY"
-                        elif score >= 5:
-                            w_rating = "MODERATE BUY"
-                        elif score >= 3:
-                            w_rating = "WATCHLIST / HOLD"
-                        else:
-                            w_rating = "AVOID"
+                        # Rating
+                        if score >= 7: w_rating = "STRONG BUY"
+                        elif score >= 5: w_rating = "MODERATE BUY"
+                        elif score >= 3: w_rating = "WATCHLIST / HOLD"
+                        else: w_rating = "AVOID"
                         w_df.at[idx, "Rating"] = w_rating
 
-                        # Watchlist alert: fire from background scanner only
-                        vol_bg = latest.get("Volume", 1)
-                        vol20_bg = latest.get("Vol_20SMA", 1) or 1
-                        vr_bg = vol_bg / vol20_bg
-                        is_green_bg = latest.get("Close", 0) >= latest.get("Open", 0)
-                        vol_foot_bg = "🟢 Accumulation" if vr_bg >= 1.5 and is_green_bg else ""
-                        if w_rating == "STRONG BUY" or "🟢 Accumulation" in vol_foot_bg:
+                        # Vol Footprint
+                        v_rat = latest["Volume"] / (latest["Vol_20SMA"] if latest["Vol_20SMA"] > 0 else 1)
+                        is_gr = latest["Close"] >= latest["Open"]
+                        foot = "🟢 Accumulation" if v_rat >= 1.5 and is_gr else "🔴 DISTRIBUTION" if v_rat >= 1.5 else "⚪ Normal"
+                        w_df.at[idx, "Vol Footprint"] = foot
+
+                        if w_rating == "STRONG BUY" or "🟢 Accumulation" in foot:
                             log_alert(f"🔥 Watchlist Alert: Strong setup on {ticker}", icon="🔥")
 
-                        # Entry Context: stripped label text (e.g. SAFE, FAIR, OVEREXTENDED)
-                        # Strip leading emoji/color indicator
+                        # Entry Context
                         context_str = str(label).strip()
                         for prefix in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             context_str = context_str.replace(prefix, "")
                         w_df.at[idx, "Entry Context"] = context_str
 
-                        # Trend Strength: t_points out of 2
+                        # Trend Strength
                         w_df.at[idx, "Trend Strength"] = f"{t_pts}/2"
 
-                        # Stop Loss: 2% below Active_Support
+                        # Stop Loss
                         w_df.at[idx, "Stop Loss"] = round(support_val * 0.98, 2)
                 except: pass
 
-            # Purge nan ghost data in Rating column
             w_df["Rating"] = w_df["Rating"].astype(str).replace(
                 {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
             )
-            save_sheet_data("Watchlist", w_df, ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"])
+            save_sheet_data("Watchlist", w_df, w_schema)
 
         # 3. Log to ScanHistory — only when connection is confirmed active
         if get_conn() is not None:
@@ -1816,7 +1862,7 @@ if search_query:
             
             # --- Smart Action Buttons (Watchlist) ---
             clean_p = sanitize_ticker(full_ticker)
-            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"]
+            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
             w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
             
             w_col1, w_col2 = st.columns(2)
@@ -1837,7 +1883,9 @@ if search_query:
                                 "Price": round(float(latest["Close"]), 2),
                                 "Rating": master_rating,
                                 "Entry Context": ctx_add,
-                                "Trend Strength": f"{t_pts_add}/2"
+                                "Trend Strength": f"{t_pts_add}/2",
+                                "Stop Loss": round(support_val * 0.98, 2),
+                                "Vol Footprint": "Pending Scan..."
                             }])
                             w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
                             save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
@@ -1971,17 +2019,26 @@ if search_query:
                             st.caption("⚠️ To adjust this position, delete it from the Live Portfolio table first.")
                         else:
                             if st.button("💼 Add to Portfolio", use_container_width=True):
-                                p_df = load_sheet_data("Portfolio", ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"])
+                                p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
+                                p_df = load_sheet_data("Portfolio", p_schema)
                                 new_trade = pd.DataFrame([{
                                     "Ticker": clean_p,
                                     "Buy_Price": entry_price,
                                     "Initial_Stop": stop_loss,
                                     "Highest_Trail": stop_loss,
                                     "Quantity": final_qty,
-                                    "Date_Added": datetime.now(IST).strftime("%Y-%m-%d")
+                                    "Date_Added": datetime.now(IST).strftime("%Y-%m-%d"),
+                                    "CMP": entry_price,
+                                    "RSI_HTML": "...",
+                                    "T1_HTML": "...",
+                                    "PCT_HTML": "...",
+                                    "Vol_Foot": "...",
+                                    "Verdict_HTML": "<span style='color:gray;'>Pending Scan...</span>",
+                                    "_verdict_rank": -1,
+                                    "_vol_rank": -1
                                 }])
                                 p_df = pd.concat([p_df, new_trade], ignore_index=True)
-                                save_sheet_data("Portfolio", p_df, ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"])
+                                save_sheet_data("Portfolio", p_df, p_schema)
                                 st.success(f"Added {clean_p} to Portfolio!")
                                 st.rerun()
                             
@@ -2003,7 +2060,7 @@ st.subheader("💼 Live Portfolio")
 if st.session_state["sheets_error"]:
     st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
 
-p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added"]
+p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
 p_df = load_sheet_data("Portfolio", p_schema)
 if not p_df.empty:
     port_display_rows = []
@@ -2011,144 +2068,55 @@ if not p_df.empty:
     for idx, row in p_df.iterrows():
         ticker = row["Ticker"]
         if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
-        clean_ticker = sanitize_ticker(ticker)
+        
+        # Read pre-calculated fields
         buy_price = float(row.get("Buy_Price", 0))
-
-        # Safely extract Initial Stop (Fallback to 10% trailing stop for legacy rows)
-        raw_init = row.get("Initial_Stop")
-        if pd.isna(raw_init) or str(raw_init).strip() == "" or raw_init is None:
-            init_stop = buy_price * 0.9 
+        cmp = float(row.get("CMP", 0))
+        init_stop = float(row.get("Initial_Stop", 0))
+        current_trail = float(row.get("Highest_Trail", 0))
+        
+        # Check if we have processed data or if it's "Pending"
+        v_html = row.get("Verdict_HTML")
+        if not v_html or pd.isna(v_html):
+            v_html = "<span style='color:gray;'>Pending Scan...</span>"
+            rsi_h = "..."
+            t1_h = "..."
+            pct_h = "..."
+            v_foot = "..."
+            v_rank = -1
+            vol_rank = -1
         else:
-            try:
-                init_stop = float(raw_init)
-            except (ValueError, TypeError):
-                init_stop = buy_price * 0.9
+            rsi_h = row.get("RSI_HTML", "...")
+            t1_h = row.get("T1_HTML", "...")
+            pct_h = row.get("PCT_HTML", "...")
+            v_foot = row.get("Vol_Foot", "...")
+            v_rank = row.get("_verdict_rank", -1)
+            vol_rank = row.get("_vol_rank", -1)
 
-        # Safely extract Highest Trail
-        raw_trail = row.get("Highest_Trail")
-        if pd.isna(raw_trail) or str(raw_trail).strip() == "" or raw_trail is None:
-            high_trail = init_stop
-        else:
-            try:
-                high_trail = float(raw_trail)
-            except (ValueError, TypeError):
-                high_trail = init_stop
+        # Count alerts for the Status Hub (Live counts)
+        if "SELL" in str(v_html):
+            total_sell_alerts += 1
 
-        try:
-            p_data = fetch_ohlcv(clean_ticker)
-
-            # Smart Search Fallback
-            if p_data.empty:
-                try:
-                    search_res = yf.Search(clean_ticker, max_results=1).quotes
-                    if search_res:
-                        new_sym = search_res[0]['symbol']
-                        p_data = fetch_ohlcv(new_sym)
-                        clean_ticker = new_sym
-                except Exception:
-                    pass
-
-            if not p_data.empty:
-                p_data = compute_indicators(p_data)
-                funda = fetch_fundamentals(clean_ticker)
-                score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(p_data, funda)
-                cmp = p_data["Close"].iloc[-1]
-                pnl = ((cmp - buy_price) / buy_price * 100) if buy_price > 0 else 0
-
-                # ── RSI ─────────────────────────────────────────────────────
-                rsi_vals = ta.rsi(p_data['Close'], length=14)
-                rsi = rsi_vals.iloc[-1] if not rsi_vals.empty and not pd.isna(rsi_vals.iloc[-1]) else 50
-                rsi_str = f"{rsi:.1f}"
-                if rsi >= 70:
-                    rsi_html = f"<span style='color:#FF4B4B; font-weight:bold;'>{rsi_str} (OB)</span>"
-                elif rsi <= 30:
-                    rsi_html = f"<span style='color:#00D4AA; font-weight:bold;'>{rsi_str} (OS)</span>"
-                else:
-                    rsi_html = f"<span style='color:#AAAAAA;'>{rsi_str}</span>"
-
-                # ── Volume Footprint ─────────────────────────────────────────
-                vol_today = p_data["Volume"].iloc[-1]
-                vol_20sma_raw = p_data["Vol_20SMA"].iloc[-1]
-                vol_20sma = vol_20sma_raw if not pd.isna(vol_20sma_raw) and vol_20sma_raw > 0 else 1
-                v_ratio = vol_today / vol_20sma
-                is_green = cmp >= p_data["Open"].iloc[-1]
-                if v_ratio >= 1.5 and is_green:
-                    vol_foot = "🟢 Accumulation"
-                elif v_ratio >= 1.5 and not is_green:
-                    vol_foot = "🔴 DISTRIBUTION"
-                else:
-                    vol_foot = "⚪ Normal"
-
-                # ── Ratchet Logic ────────────────────────────────────────────
-                # UI is READ-ONLY: read Highest_Trail from sheet, compute display value only.
-                live_s1 = p_data["Active_Support"].iloc[-1]
-                current_trail = max(float(live_s1), high_trail)
-                
-                # ── T1: 1:3 R:R Scale-Out Target ────────────────────────────
-                p_risk = buy_price - init_stop
-                if p_risk > 0:
-                    p_t1 = buy_price + (p_risk * 3)
-                    t1_str = f"₹{p_t1:,.2f}"
-                    t1_color = "#00D4AA" if cmp >= p_t1 else "#AAAAAA"
-                else:
-                    t1_str, t1_color = "N/A", "#AAAAAA"
-
-                # ── % to Stop ────────────────────────────────────────────────
-                pct_to_stop = ((cmp - current_trail) / cmp) * 100 if cmp > 0 else 0
-                if pct_to_stop < 2.0:
-                    pct_color = "#FF4B4B"
-                elif pct_to_stop < 5.0:
-                    pct_color = "#FFD700"
-                else:
-                    pct_color = "#00D4AA"
-                pct_html = f"<span style='color:{pct_color}; font-weight:bold;'>{pct_to_stop:.1f}%</span>"
-
-                # ── Verdict ──────────────────────────────────────────────────
-                # Instead of cutting at exactly S1, we allow a 1% 'noise' buffer
-                stop_zone = current_trail * 0.99
-                vol_ratio = v_ratio
-                
-                # Only trigger URGENT SELL if price is below zone AND volume is high (>0.8x)
-                if cmp < stop_zone and vol_ratio > 0.8:
-                    verdict, v_color = "🔴 SELL (Breakdown)", "#FF4B4B"
-                elif cmp < stop_zone and vol_ratio <= 0.8:
-                    verdict, v_color = "🟡 WATCH (Low Vol Test)", "#FFD700"
-                elif v_ratio >= 1.5 and not is_green and rsi > 65:
-                    verdict, v_color = "🔴 SELL (Exhaustion)", "#FF4B4B"
-                elif score < 4:
-                    verdict, v_color = "🟡 TRIM (Weakening)", "#FFD700"
-                else:
-                    verdict, v_color = "🟢 HOLD", "#00D4AA"
-                verdict_html = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
-
-                if "🔴 SELL (Breakdown)" in verdict:
-                    total_sell_alerts += 1
-                elif "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
-                    total_sell_alerts += 1
-
-                v_rank = 4 if "HOLD" in verdict else 3 if "WATCH" in verdict else 2 if "TRIM" in verdict else 1 if "Exhaustion" in verdict else 0
-                vol_rank = 2 if "Accumulation" in vol_foot else 0 if "DISTRIBUTION" in vol_foot else 1
-
-                port_display_rows.append({
-                    "_idx": idx,
-                    "_ticker": clean_ticker,
-                    "_verdict_rank": v_rank,
-                    "_vol_rank": vol_rank,
-                    "_raw_buy_price": buy_price,
-                    "_raw_cmp": cmp,
-                    "_raw_qty": row.get("Quantity", 1),
-                    "_raw_date": row.get("Date_Added", datetime.now(IST).strftime("%Y-%m-%d")),
-                    "Ticker": clean_ticker,
-                    "Buy_Price": f"₹{format_indian(buy_price, is_price=True)}",
-                    "CMP": f"₹{format_indian(cmp, is_price=True)}",
-                    "Init_Stop": f"₹{format_indian(init_stop, is_price=True)}",
-                    "Trail_Stop": f"₹{format_indian(current_trail, is_price=True)}",
-                    "RSI_HTML": rsi_html,
-                    "T1_HTML": f"<span style='color:{t1_color}; font-weight:bold;'>₹{format_indian(p_t1 if p_risk > 0 else 0, is_price=True) if p_risk > 0 else 'N/A'}</span>",
-                    "PCT_HTML": pct_html,
-                    "Vol_Foot": vol_foot,
-                    "Verdict_HTML": verdict_html
-                })
+        port_display_rows.append({
+            "_idx": idx,
+            "_ticker": ticker,
+            "_verdict_rank": v_rank,
+            "_vol_rank": vol_rank,
+            "_raw_buy_price": buy_price,
+            "_raw_cmp": cmp,
+            "_raw_qty": row.get("Quantity", 1),
+            "_raw_date": row.get("Date_Added", ""),
+            "Ticker": ticker,
+            "Buy_Price": f"₹{format_indian(buy_price, is_price=True)}",
+            "CMP": f"₹{format_indian(cmp, is_price=True)}",
+            "Init_Stop": f"₹{format_indian(init_stop, is_price=True)}",
+            "Trail_Stop": f"₹{format_indian(current_trail, is_price=True)}",
+            "RSI_HTML": rsi_h,
+            "T1_HTML": t1_h,
+            "PCT_HTML": pct_h,
+            "Vol_Foot": v_foot,
+            "Verdict_HTML": v_html
+        })
             else:
                 port_display_rows.append({
                     "_idx": idx,
@@ -2244,99 +2212,56 @@ if st.session_state.get("sheets_error"):
 
 
 
-WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"]
+WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
 w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
 
-# Purge nan ghost data from legacy Rating values
 if not w_df.empty:
-    if 'Rating' in w_df.columns:
-        w_df["Rating"] = w_df["Rating"].astype(str).replace(
-            {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
-        )
-    else:
-        w_df["Rating"] = "AVOID"
-
-if not w_df.empty:
-    # ── Live-refresh live metrics per row, then render styled table ──────
     display_rows = []
-    with st.container():
-        for idx, row in w_df.iterrows():
-            time.sleep(0.05)  # Minor throttle for yfinance
-            ticker = row["Ticker"]
-            if not ticker or pd.isna(ticker) or str(ticker).strip() == '' or str(ticker).lower() == 'nan':
-                continue
-            clean_ticker = sanitize_ticker(ticker)
-            try:
-                w_data = fetch_ohlcv(clean_ticker)
+    for idx, row in w_df.iterrows():
+        ticker = row["Ticker"]
+        if not ticker or pd.isna(ticker) or str(ticker).strip() == '' or str(ticker).lower() == 'nan':
+            continue
 
-                # Smart Search Fallback
-                if w_data.empty:
-                    try:
-                        search_res = yf.Search(clean_ticker, max_results=1).quotes
-                        if search_res:
-                            new_sym = search_res[0]['symbol']
-                            w_data = fetch_ohlcv(new_sym)
-                            clean_ticker = new_sym
-                    except Exception:
-                        pass
+        # Read pre-calculated fields
+        w_cmp = row.get("Price", 0)
+        w_rating = str(row.get("Rating", "AVOID"))
+        ctx_live = str(row.get("Entry Context", "N/A"))
+        t_pts_w = str(row.get("Trend Strength", "0/2"))
+        w_vol_foot = str(row.get("Vol Footprint", "⚪ Normal"))
+        
+        # Rankings for sorting (Fallback to logical mappings if not present)
+        # Rating Rank
+        if "STRONG" in w_rating: score_w = 7
+        elif "MODERATE" in w_rating: score_w = 5
+        elif "WATCHLIST" in w_rating: score_w = 3
+        else: score_w = 0
+        
+        # Context Rank
+        c_risk = 0 if "SAFE" in ctx_live else 1 if "FAIR" in ctx_live else 2
+        
+        # Trend Rank
+        trend_val = 2 if "2/2" in t_pts_w else 1 if "1/2" in t_pts_w else 0
+        
+        # Vol Rank
+        v_rank = 2 if "Accumulation" in w_vol_foot else 0 if "DISTRIBUTION" in w_vol_foot else 1
 
-                if not w_data.empty:
-                    w_data = compute_indicators(w_data)
-                    w_cmp = w_data['Close'].iloc[-1]
-                    w_label, _, _ = get_market_condition(w_data)
-                    ctx_live = str(w_label).strip()
-                    for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
-                        ctx_live = ctx_live.replace(pfx, "")
-                    f_w = fetch_fundamentals(clean_ticker)
-                    score_w, t_pts_w, v_pts_w, s_pts_w, f_pts_w, str_pts_w, sma_pts_w, def_pts_w = calculate_master_score(w_data, f_w)
-                    
-                    w_vol = w_data["Volume"].iloc[-1]
-                    w_vol20 = w_data["Vol_20SMA"].iloc[-1] if not pd.isna(w_data["Vol_20SMA"].iloc[-1]) and w_data["Vol_20SMA"].iloc[-1] > 0 else 1
-                    w_v_ratio = w_vol / w_vol20
-                    w_is_green = w_cmp >= w_data["Open"].iloc[-1]
-                    if w_v_ratio >= 1.5 and w_is_green: w_vol_foot, w_vol_rank = "🟢 Accumulation", 2
-                    elif w_v_ratio >= 1.5 and not w_is_green: w_vol_foot, w_vol_rank = "🔴 DISTRIBUTION", 0
-                    else: w_vol_foot, w_vol_rank = "⚪ Normal", 1
-                    
-                    cond_val = 0 if "SAFE" in ctx_live else 1 if "FAIR" in ctx_live else 2
-                    
-                    rating_raw = str(row.get("Rating", "AVOID")).upper()
-                    if "STRONG BUY" in rating_raw or "🟢 Accumulation" in w_vol_foot:
-                        total_buy_alerts += 1
+        if "STRONG BUY" in w_rating or "🟢 Accumulation" in w_vol_foot:
+            total_buy_alerts += 1
 
-                    display_ticker_w = clean_ticker
-
-                    display_rows.append({
-                        "_idx": idx,
-                        "_ticker": clean_ticker,
-                        "_rating_rank": score_w,
-                        "_trend_rank": t_pts_w,
-                        "_ctx_risk": cond_val,
-                        "_vol_rank": w_vol_rank,
-                        "Ticker": display_ticker_w,
-                        "Price": f"₹{format_indian(w_cmp, is_price=True)}",
-                        "Rating": str(row.get("Rating", "AVOID")),
-                        "Entry Context": ctx_live,
-                        "Trend": f"{t_pts_w}/2",
-                        "Vol Footprint": w_vol_foot,
-                    })
-                else:
-                    display_rows.append({
-                        "_idx": idx,
-                        "_ticker": clean_ticker,
-                        "_rating_rank": -1,
-                        "_trend_rank": -1,
-                        "_ctx_risk": 99,
-                        "_vol_rank": -1,
-                        "Ticker": f"⚠️ {clean_ticker}",
-                        "Price": "N/A",
-                        "Rating": str(row.get("Rating", "AVOID")),
-                        "Entry Context": "N/A",
-                        "Trend": "N/A",
-                        "Vol Footprint": "N/A",
-                    })
-            except Exception:
-                st.error(f"Error processing {clean_ticker}")
+        display_rows.append({
+            "_idx": idx,
+            "_ticker": ticker,
+            "_rating_rank": score_w,
+            "_trend_rank": trend_val,
+            "_ctx_risk": c_risk,
+            "_vol_rank": v_rank,
+            "Ticker": ticker,
+            "Price": f"₹{format_indian(w_cmp, is_price=True)}",
+            "Rating": w_rating,
+            "Entry Context": ctx_live,
+            "Trend": t_pts_w,
+            "Vol Footprint": w_vol_foot,
+        })
 
     if display_rows:
         w_sort = st.selectbox("Sort Watchlist By:", ["Rating (Strongest First)", "Default (None)", "Entry Context (Lowest Risk)", "Trend Strength", "Volume Footprint"], index=0)

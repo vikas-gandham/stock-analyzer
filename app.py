@@ -654,8 +654,8 @@ def run_scheduled_scan():
     if last_scan_val == "None":
         if st.session_state.get("lock_init"): return
         st.session_state["lock_init"] = True
-        background_batch_scan()
-        # Re-check connection after scan (quota sleep may have elapsed)
+        
+        # Save Metadata BEFORE scan to prevent re-triggering loop
         if get_conn() is not None:
             sync_now = datetime.now(IST).strftime("%I:%M %p IST")
             new_meta = pd.DataFrame([
@@ -663,6 +663,8 @@ def run_scheduled_scan():
                 {"Key": "last_sync_actual", "Value": sync_now},
             ])
             save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+        
+        background_batch_scan()
         return
 
     # 2. Daily Schedule Loop
@@ -672,8 +674,8 @@ def run_scheduled_scan():
             if last_scan_val != window_scan_key:
                 if st.session_state.get(f"lock_{window_scan_key}"): continue
                 st.session_state[f"lock_{window_scan_key}"] = True
-                background_batch_scan()
-                # Re-check connection before writing Metadata
+
+                # Save Metadata BEFORE scan to prevent re-triggering loop
                 if get_conn() is not None:
                     sync_now = datetime.now(IST).strftime("%I:%M %p IST")
                     new_meta = pd.DataFrame([
@@ -681,6 +683,8 @@ def run_scheduled_scan():
                         {"Key": "last_sync_actual", "Value": sync_now},
                     ])
                     save_sheet_data("Metadata", new_meta, ["Key", "Value"])
+
+                background_batch_scan()
                 break
 
 
@@ -2082,14 +2086,10 @@ if not p_df.empty:
         
         # Check if we have processed data or if it's "Pending"
         v_html = row.get("Verdict_HTML")
-        if not v_html or pd.isna(v_html):
+        if not v_html or pd.isna(v_html) or str(v_html).strip().lower() in ["nan", "none", ""]:
             v_html = "<span style='color:gray;'>Pending Scan...</span>"
-            rsi_h = "..."
-            t1_h = "..."
-            pct_h = "..."
-            v_foot = "..."
-            v_rank = -1
-            vol_rank = -1
+            rsi_h, t1_h, pct_h, v_foot = "...", "...", "...", "..."
+            v_rank, vol_rank = -1, -1
         else:
             rsi_h = row.get("RSI_HTML", "...")
             t1_h = row.get("T1_HTML", "...")
@@ -2221,6 +2221,8 @@ if not w_df.empty:
         ctx_live = str(row.get("Entry Context", "N/A"))
         t_pts_w = str(row.get("Trend Strength", "0/2"))
         w_vol_foot = str(row.get("Vol Footprint", "⚪ Normal"))
+        if w_vol_foot.strip().lower() in ["nan", "none", ""]:
+            w_vol_foot = "Pending Scan..."
         
         # Rankings for sorting (Fallback to logical mappings if not present)
         # Rating Rank

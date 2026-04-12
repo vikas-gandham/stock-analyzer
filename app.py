@@ -439,8 +439,6 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             except Exception:
                 active_conn.create(worksheet=worksheet, data=df)
             time.sleep(2)
-            # Clear local cache so UI reads the new data immediately
-            st.cache_data.clear()
 
             # ── Auto-Mirror: keep local CSV in sync with Sheets ────
             try:
@@ -2413,13 +2411,6 @@ st.markdown("<br><br>", unsafe_allow_html=True)
 # Footer
 # ===================================================================
 
-# --- 🚀 SCHEDULED SCAN (deferred so entire UI renders first) ---
-# Placed here so the Search Bar, Status Hub, Portfolio and Watchlist
-# are all painted before any heavy background fetching begins.
-try:
-    run_scheduled_scan()
-except Exception as _scan_err:
-    pass  # Non-blocking: scan failure must never kill the page
 
 st.divider()
 st.caption("Data sourced from Yahoo Finance. News via Google News. System Generated Technical Report. Built with Streamlit.")

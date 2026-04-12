@@ -2117,18 +2117,6 @@ if not p_df.empty:
             "Vol_Foot": v_foot,
             "Verdict_HTML": v_html
         })
-            else:
-                port_display_rows.append({
-                    "_idx": idx,
-                    "_ticker": clean_ticker,
-                    "_verdict_rank": -1,
-                    "_vol_rank": -1,
-                    "Ticker": f"⚠️ {clean_ticker}",
-                    "Buy_Price": "N/A", "CMP": "N/A", "Init_Stop": "N/A", "Trail_Stop": "N/A",
-                    "RSI_HTML": "N/A", "T1_HTML": "N/A", "PCT_HTML": "N/A", "Vol_Foot": "N/A", "Verdict_HTML": "N/A"
-                })
-        except Exception:
-            pass
 
     if port_display_rows:
         p_sort = st.selectbox("Sort Portfolio By:", ["Verdict (Action Needed)", "Default (Date Added)", "Volume Footprint"], index=0)

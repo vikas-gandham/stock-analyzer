@@ -2070,10 +2070,15 @@ if not p_df.empty:
         if not ticker or pd.isna(ticker) or str(ticker).strip() == '': continue
         
         # Read pre-calculated fields
-        buy_price = float(row.get("Buy_Price", 0))
-        cmp = float(row.get("CMP", 0))
-        init_stop = float(row.get("Initial_Stop", 0))
-        current_trail = float(row.get("Highest_Trail", 0))
+        def safe_float(val, default=0.0):
+            if val is None or pd.isna(val) or str(val).strip() == "": return default
+            try: return float(val)
+            except: return default
+
+        buy_price = safe_float(row.get("Buy_Price", 0))
+        cmp = safe_float(row.get("CMP", 0))
+        init_stop = safe_float(row.get("Initial_Stop", 0))
+        current_trail = safe_float(row.get("Highest_Trail", 0))
         
         # Check if we have processed data or if it's "Pending"
         v_html = row.get("Verdict_HTML")

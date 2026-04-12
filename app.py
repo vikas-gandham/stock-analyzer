@@ -2138,7 +2138,7 @@ if not p_df.empty:
             pass
 
     if port_display_rows:
-        p_sort = st.selectbox("Sort Portfolio By:", ["Default (Date Added)", "Verdict (Action Needed)", "Volume Footprint"], index=0)
+        p_sort = st.selectbox("Sort Portfolio By:", ["Verdict (Action Needed)", "Default (Date Added)", "Volume Footprint"], index=0)
         if "Verdict" in p_sort: port_display_rows.sort(key=lambda x: x.get("_verdict_rank", -1))
         elif "Volume" in p_sort: port_display_rows.sort(key=lambda x: x.get("_vol_rank", -1), reverse=True)
 
@@ -2316,7 +2316,7 @@ if not w_df.empty:
                 st.error(f"Error processing {clean_ticker}")
 
     if display_rows:
-        w_sort = st.selectbox("Sort Watchlist By:", ["Default (None)", "Rating (Strongest First)", "Entry Context (Lowest Risk)", "Trend Strength", "Volume Footprint"], index=0)
+        w_sort = st.selectbox("Sort Watchlist By:", ["Rating (Strongest First)", "Default (None)", "Entry Context (Lowest Risk)", "Trend Strength", "Volume Footprint"], index=0)
         if "Rating" in w_sort: display_rows.sort(key=lambda x: x.get("_rating_rank", -1), reverse=True)
         elif "Context" in w_sort: display_rows.sort(key=lambda x: x.get("_ctx_risk", 99))
         elif "Trend" in w_sort: display_rows.sort(key=lambda x: x.get("_trend_rank", -1), reverse=True)

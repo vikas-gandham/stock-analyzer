@@ -1417,8 +1417,8 @@ def render_control_center():
                     results = []
                     progress_text = st.empty()
                     
-                    # Pre-load watchlist for badge checks
-                    w_cols_batch = ["Ticker", "Badge"]
+                    # Pre-load watchlist
+                    w_cols_batch = ["Ticker"]
                     w_df_batch = load_sheet_data("Watchlist", w_cols_batch)
                     
                     for i, t in enumerate(tickers_to_scan):
@@ -1470,13 +1470,7 @@ def render_control_center():
                             elif b_v_ratio >= 1.5 and not b_is_green: b_vol_foot = "🔴 DISTRIBUTION"
                             else: b_vol_foot = "⚪ Normal"
 
-                            # 5. Badge Check
-                            b_val_b = ""
-                            if not w_df_batch.empty and t_sym in w_df_batch["Ticker"].values:
-                                b_val_b = str(w_df_batch[w_df_batch["Ticker"] == t_sym]["Badge"].iloc[0]).upper()
-                            
-                            is_special_b = (b_val_b == "STAR")
-                            display_ticker_b = f"{t_sym} 🏆" if is_special_b else t_sym
+                            display_ticker_b = t_sym
 
                             results.append({
                                 "Ticker": display_ticker_b,
@@ -1822,7 +1816,7 @@ if search_query:
             
             # --- Smart Action Buttons (Watchlist) ---
             clean_p = sanitize_ticker(full_ticker)
-            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Badge"]
+            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"]
             w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
             
             w_col1, w_col2 = st.columns(2)
@@ -1843,31 +1837,13 @@ if search_query:
                                 "Price": round(float(latest["Close"]), 2),
                                 "Rating": master_rating,
                                 "Entry Context": ctx_add,
-                                "Trend Strength": f"{t_pts_add}/2",
-                                "Badge": ""
+                                "Trend Strength": f"{t_pts_add}/2"
                             }])
                             w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
                             save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
                             st.success(f"Added {clean_p} to Watchlist!")
                             st.rerun()
             
-            with w_col2:
-                if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
-                    # Find target row index
-                    row_mask = w_df_check["Ticker"] == clean_p
-                    curr_badge = w_df_check.loc[row_mask, "Badge"].iloc[0]
-                    btn_label = "⭐ Remove Badge" if str(curr_badge).upper() == "STAR" else "⭐ Add STAR Badge"
-                    
-                    if st.button(btn_label, use_container_width=True, key="btn_badge_toggle"):
-                        new_val = "" if str(curr_badge).upper() == "STAR" else "STAR"
-                        # Use surgical index-based update for persistence
-                        row_idx = w_df_check[row_mask].index[0]
-                        w_df_check.at[row_idx, "Badge"] = new_val
-                        save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
-                        st.success(f"Badge updated for {clean_p}!")
-                        st.rerun()
-                else:
-                    st.button("⭐ Badge (Add to Watchlist First)", disabled=True, use_container_width=True)
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -2268,7 +2244,7 @@ if st.session_state.get("sheets_error"):
 
 
 
-WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Badge"]
+WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"]
 w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
 
 # Purge nan ghost data from legacy Rating values
@@ -2328,10 +2304,7 @@ if not w_df.empty:
                     if "STRONG BUY" in rating_raw or "🟢 Accumulation" in w_vol_foot:
                         total_buy_alerts += 1
 
-                    # ── Special Badge Logic ──
-                    b_val_w = str(row.get("Badge", "")).upper()
-                    is_special_w = (b_val_w == "STAR")
-                    display_ticker_w = f"{clean_ticker} 🏆" if is_special_w else clean_ticker
+                    display_ticker_w = clean_ticker
 
                     display_rows.append({
                         "_idx": idx,

@@ -1713,6 +1713,8 @@ if search_query:
             day_change_pct = (day_change / prev_close) * 100
             support_val = df["Active_Support"].iloc[-1]
             resistance_val = df["Active_Resistance"].iloc[-1]
+            s2_val = df["Support_2"].iloc[-1]
+            r2_val = df["Resistance_2"].iloc[-1]
             week52_high = df["High"].max()
             week52_low = df["Low"].min()
             ideal_entry = support_val * 1.012  # 1.2% above S1 to confirm the bounce
@@ -1735,9 +1737,9 @@ if search_query:
             c1.metric("Current Price", fmt_price(latest['Close']))
             c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=fmt_delta(day_change))
             c3.metric("Ideal Entry (Bounce)", fmt_price(ideal_entry))
-            c4.metric("Support (S1)", fmt_price(support_val))
+            c4.metric("Support (S1 | S2)", fmt_price(support_val), delta=f"S2: {fmt_price(s2_val)}", delta_color="normal")
             c5.metric("Auto Stop (Zone)", fmt_price(ideal_stop))
-            c6.metric("Resistance (R1)", fmt_price(resistance_val))
+            c6.metric("Resist. (R1 | R2)", fmt_price(resistance_val), delta=f"R2: {fmt_price(r2_val)}", delta_color="normal")
             c7.metric("52W High", fmt_price(week52_high))
             c8.metric("52W Low", fmt_price(week52_low))
 

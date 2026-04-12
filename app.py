@@ -1960,8 +1960,14 @@ if search_query:
                     max_risk = capital * 0.01
                     risk_per_share = entry_price - stop_loss
                     
-                    # Calculate the auto 1% suggestion
-                    auto_shares = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
+                    # 1. How many shares can we buy based on 1% risk limit?
+                    max_shares_by_risk = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
+                    
+                    # 2. How many shares can we actually afford with our cash balance?
+                    max_shares_by_capital = math.floor(capital / entry_price) if entry_price > 0 else 0
+                    
+                    # 3. The auto-suggestion must be the smaller of the two
+                    auto_shares = min(max_shares_by_risk, max_shares_by_capital)
                     
                     # Determine which quantity to show and use
                     # Use manual entry if user typed something, otherwise use auto

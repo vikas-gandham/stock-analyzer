@@ -1439,14 +1439,7 @@ def render_control_center():
                             b_close = b_df["Close"].iloc[-1]
                             b_sup1 = b_df["Active_Support"].iloc[-1]
                             b_res1 = b_df["Active_Resistance"].iloc[-1]
-                            risk_pct = ((b_close - b_sup1) / b_close) * 100
                             
-                            if b_res1 > b_sup1:
-                                raw_s = ((b_close - b_sup1) / (b_res1 - b_sup1)) * 100
-                                b_score = max(0, min(100, int(raw_s)))
-                            else:
-                                b_score = 50
-
                             # 1. Get Context (Centralized Logic)
                             b_label, _, _ = get_market_condition(b_df)
                             ctx_clean = str(b_label).strip()
@@ -1463,15 +1456,23 @@ def render_control_center():
                             elif m_score >= 3: m_rating = "WATCHLIST / HOLD"
                             else: m_rating = "AVOID"
 
+                            # 4. Vol Footprint
+                            b_vol = b_df["Volume"].iloc[-1]
+                            b_vol20 = b_df["Vol_20SMA"].iloc[-1] if not pd.isna(b_df["Vol_20SMA"].iloc[-1]) and b_df["Vol_20SMA"].iloc[-1] > 0 else 1
+                            b_v_ratio = b_vol / b_vol20
+                            b_is_green = b_close >= b_df["Open"].iloc[-1]
+                            if b_v_ratio >= 1.5 and b_is_green: b_vol_foot = "🟢 Accumulation"
+                            elif b_v_ratio >= 1.5 and not b_is_green: b_vol_foot = "🔴 DISTRIBUTION"
+                            else: b_vol_foot = "⚪ Normal"
+
                             results.append({
                                 "Ticker": t_sym,
                                 "Price": format_indian(round(b_close, 2), is_price=True),
-                                "Support": format_indian(round(b_sup1, 2), is_price=True),
                                 "Entry Context": ctx_clean,
                                 "Trend": f"{t_pts}/2",
                                 "Rating": m_rating,
-                                "_rating_rank": m_score,
-                                "Risk to Stop %": round(risk_pct, 2)
+                                "Vol Footprint": b_vol_foot,
+                                "_rating_rank": m_score
                             })
                         except:
                             continue
@@ -1553,16 +1554,15 @@ def render_control_center():
         st.subheader("🔥 Watchlist Batch Results")
         b_results = st.session_state["batch_results"]
         if not b_results.empty:
-            # Header — wider ratios for full-screen display
             # Header
-            B_COL_RATIOS = [1.5, 1, 1.2, 1.5, 1, 1.5, 1.2]
+            B_COL_RATIOS = [1.5, 1, 1.5, 1, 1.5, 1.5, 1.2]
             bh_col = st.columns(B_COL_RATIOS)
             bh_col[0].markdown("**Ticker**")
             bh_col[1].markdown("**Price**")
-            bh_col[2].markdown("**Support**")
-            bh_col[3].markdown("**Entry Context**")
-            bh_col[4].markdown("**Trend**")
-            bh_col[5].markdown("**Rating**")
+            bh_col[2].markdown("**Entry Context**")
+            bh_col[3].markdown("**Trend**")
+            bh_col[4].markdown("**Rating**")
+            bh_col[5].markdown("**Vol Footprint**")
             bh_col[6].markdown("**Action**")
 
             for idx, row in b_results.iterrows():
@@ -1585,10 +1585,10 @@ def render_control_center():
                 rb_col = st.columns(B_COL_RATIOS)
                 rb_col[0].write(row["Ticker"])
                 rb_col[1].write(f"₹{row['Price']}")
-                rb_col[2].write(f"₹{row['Support']}")
-                rb_col[3].markdown(c_html, unsafe_allow_html=True)
-                rb_col[4].markdown(t_html, unsafe_allow_html=True)
-                rb_col[5].markdown(r_html, unsafe_allow_html=True)
+                rb_col[2].markdown(c_html, unsafe_allow_html=True)
+                rb_col[3].markdown(t_html, unsafe_allow_html=True)
+                rb_col[4].markdown(r_html, unsafe_allow_html=True)
+                rb_col[5].write(row["Vol Footprint"])
                 if rb_col[6].button("Analyze", key=f"b_an_{row['Ticker']}_{idx}", on_click=set_search_ticker, args=(row["Ticker"],)):
                     pass
         else:
@@ -1808,7 +1808,7 @@ if search_query:
             
             # --- Smart Action Buttons (Watchlist) ---
             clean_p = sanitize_ticker(full_ticker)
-            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
+            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"]
             w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
             if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
                 st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
@@ -1827,7 +1827,6 @@ if search_query:
                             "Rating": master_rating,
                             "Entry Context": ctx_add,
                             "Trend Strength": f"{t_pts_add}/2",
-                            "Stop Loss": round(float(support_val) * 0.98, 2),
                         }])
                         w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
                         save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
@@ -2233,7 +2232,7 @@ if st.session_state.get("sheets_error"):
 
 
 
-WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss"]
+WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"]
 w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
 
 # Purge nan ghost data from legacy Rating values
@@ -2272,14 +2271,12 @@ if not w_df.empty:
                 if not w_data.empty:
                     w_data = compute_indicators(w_data)
                     w_cmp = w_data['Close'].iloc[-1]
-                    w_s1 = w_data['Active_Support'].iloc[-1]
                     w_label, _, _ = get_market_condition(w_data)
                     ctx_live = str(w_label).strip()
                     for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                         ctx_live = ctx_live.replace(pfx, "")
                     f_w = fetch_fundamentals(clean_ticker)
                     score_w, t_pts_w, v_pts_w, s_pts_w, f_pts_w, str_pts_w, sma_pts_w, def_pts_w = calculate_master_score(w_data, f_w)
-                    stop_loss_live = round(w_s1 * 0.98, 2)
                     
                     w_vol = w_data["Volume"].iloc[-1]
                     w_vol20 = w_data["Vol_20SMA"].iloc[-1] if not pd.isna(w_data["Vol_20SMA"].iloc[-1]) and w_data["Vol_20SMA"].iloc[-1] > 0 else 1
@@ -2307,7 +2304,6 @@ if not w_df.empty:
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": ctx_live,
                         "Trend": f"{t_pts_w}/2",
-                        "Stop Loss": f"₹{format_indian(stop_loss_live, is_price=True)}",
                         "Vol Footprint": w_vol_foot,
                     })
                 else:
@@ -2323,7 +2319,6 @@ if not w_df.empty:
                         "Rating": str(row.get("Rating", "AVOID")),
                         "Entry Context": "N/A",
                         "Trend": "N/A",
-                        "Stop Loss": "N/A",
                         "Vol Footprint": "N/A",
                     })
             except Exception:
@@ -2336,8 +2331,8 @@ if not w_df.empty:
         elif "Trend" in w_sort: display_rows.sort(key=lambda x: x.get("_trend_rank", -1), reverse=True)
         elif "Volume" in w_sort: display_rows.sort(key=lambda x: x.get("_vol_rank", -1), reverse=True)
         
-        COL_LAYOUT = [1.5, 1.2, 1.2, 1.5, 1.0, 1.5, 1.5, 1, 1]
-        HEADERS = ["Ticker", "Price", "Stop Loss", "Entry Context", "Trend", "Rating", "Volume", "Analyze", "Del"]
+        COL_LAYOUT = [1.5, 1.2, 1.5, 1.0, 1.5, 1.8, 1, 1]
+        HEADERS = ["Ticker", "Price", "Entry Context", "Trend", "Rating", "Vol Footprint", "Analyze", "Del"]
 
         # Header row
         h_cols = st.columns(COL_LAYOUT)
@@ -2380,14 +2375,13 @@ if not w_df.empty:
             r_cols = st.columns(COL_LAYOUT)
             r_cols[0].write(dr["Ticker"])
             r_cols[1].write(dr["Price"])
-            r_cols[2].write(dr["Stop Loss"])
-            r_cols[3].markdown(ctx_html, unsafe_allow_html=True)
-            r_cols[4].markdown(trend_html, unsafe_allow_html=True)
-            r_cols[5].markdown(rating_html, unsafe_allow_html=True)
-            r_cols[6].write(dr["Vol Footprint"])
-            if r_cols[7].button("Analyze", key=f"ana_w_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
+            r_cols[2].markdown(ctx_html, unsafe_allow_html=True)
+            r_cols[3].markdown(trend_html, unsafe_allow_html=True)
+            r_cols[4].markdown(rating_html, unsafe_allow_html=True)
+            r_cols[5].write(dr["Vol Footprint"])
+            if r_cols[6].button("🔍", key=f"an_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
-            if r_cols[8].button("🗑️", key=f"del_w_{dr['_ticker']}_{dr['_idx']}"):
+            if r_cols[7].button("🗑️", key=f"del_{dr['_ticker']}_{dr['_idx']}"):
                 w_df = w_df.drop(dr["_idx"])
                 w_df["Rating"] = w_df["Rating"].astype(str).replace(
                     {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}

@@ -1475,7 +1475,7 @@ def render_control_center():
                             if not w_df_batch.empty and t_sym in w_df_batch["Ticker"].values:
                                 b_val_b = str(w_df_batch[w_df_batch["Ticker"] == t_sym]["Badge"].iloc[0]).upper()
                             
-                            is_special_b = (b_val_b == "STAR") or (t_sym == "KMCSHPR.NS")
+                            is_special_b = (b_val_b == "STAR") or (t_sym == "KMCSHPR.NS") or (t_sym == "KMCSHIL.BO")
                             display_ticker_b = f"{t_sym} 🏆" if is_special_b else t_sym
 
                             results.append({
@@ -1853,11 +1853,16 @@ if search_query:
             
             with w_col2:
                 if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
-                    curr_badge = w_df_check[w_df_check["Ticker"] == clean_p]["Badge"].iloc[0]
+                    # Find target row index
+                    row_mask = w_df_check["Ticker"] == clean_p
+                    curr_badge = w_df_check.loc[row_mask, "Badge"].iloc[0]
                     btn_label = "⭐ Remove Badge" if str(curr_badge).upper() == "STAR" else "⭐ Add STAR Badge"
+                    
                     if st.button(btn_label, use_container_width=True, key="btn_badge_toggle"):
                         new_val = "" if str(curr_badge).upper() == "STAR" else "STAR"
-                        w_df_check.loc[w_df_check["Ticker"] == clean_p, "Badge"] = new_val
+                        # Use surgical index-based update for persistence
+                        row_idx = w_df_check[row_mask].index[0]
+                        w_df_check.at[row_idx, "Badge"] = new_val
                         save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
                         st.success(f"Badge updated for {clean_p}!")
                         st.rerun()
@@ -2325,7 +2330,7 @@ if not w_df.empty:
 
                     # ── Special Badge Logic ──
                     b_val_w = str(row.get("Badge", "")).upper()
-                    is_special_w = (b_val_w == "STAR") or (clean_ticker == "KMCSHPR.NS")
+                    is_special_w = (b_val_w == "STAR") or (clean_ticker == "KMCSHPR.NS") or (clean_ticker == "KMCSHIL.BO")
                     display_ticker_w = f"{clean_ticker} 🏆" if is_special_w else clean_ticker
 
                     display_rows.append({
@@ -2415,7 +2420,7 @@ if not w_df.empty:
             r_cols[3].markdown(trend_html, unsafe_allow_html=True)
             r_cols[4].markdown(rating_html, unsafe_allow_html=True)
             r_cols[5].write(dr["Vol Footprint"])
-            if r_cols[6].button("🔍", key=f"an_{dr['_ticker']}_{dr['_idx']}", on_click=set_search_ticker, args=(dr["_ticker"],)):
+            if r_cols[6].button("Analyze", key=f"an_{dr['_ticker']}_{dr['_idx']}", use_container_width=True, on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
             if r_cols[7].button("🗑️", key=f"del_{dr['_ticker']}_{dr['_idx']}"):
                 w_df = w_df.drop(dr["_idx"])

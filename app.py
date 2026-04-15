@@ -2032,28 +2032,29 @@ if search_query:
                     st.caption("⚠️ To adjust this position, delete it from the Live Portfolio table first.")
                 else:
                     if st.button("💼 Add to Portfolio", use_container_width=True):
-                        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
-                        p_df = load_sheet_data("Portfolio", p_schema)
-                        new_trade = pd.DataFrame([{
-                            "Ticker": clean_p,
-                            "Buy_Price": entry_price,
-                            "Initial_Stop": stop_loss,
-                            "Highest_Trail": stop_loss,
-                            "Quantity": final_qty,
-                            "Date_Added": datetime.now(IST).strftime("%Y-%m-%d"),
-                            "CMP": entry_price,
-                            "RSI_HTML": "...",
-                            "T1_HTML": "...",
-                            "PCT_HTML": "...",
-                            "Vol_Foot": "...",
-                            "Verdict_HTML": "<span style='color:gray;'>Pending Scan...</span>",
-                            "_verdict_rank": -1,
-                            "_vol_rank": -1
-                        }])
-                        p_df = pd.concat([p_df, new_trade], ignore_index=True)
-                        save_sheet_data("Portfolio", p_df, p_schema)
-                        st.success(f"Added {clean_p} to Portfolio!")
-                        st.rerun()
+                        with st.spinner("Syncing to Cloud Database..."):
+                            p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
+                            p_df = load_sheet_data("Portfolio", p_schema)
+                            new_trade = pd.DataFrame([{
+                                "Ticker": clean_p,
+                                "Buy_Price": entry_price,
+                                "Initial_Stop": stop_loss,
+                                "Highest_Trail": stop_loss,
+                                "Quantity": final_qty,
+                                "Date_Added": datetime.now(IST).strftime("%Y-%m-%d"),
+                                "CMP": entry_price,
+                                "RSI_HTML": "...",
+                                "T1_HTML": "...",
+                                "PCT_HTML": "...",
+                                "Vol_Foot": "...",
+                                "Verdict_HTML": "<span style='color:gray;'>Pending Scan...</span>",
+                                "_verdict_rank": -1,
+                                "_vol_rank": -1
+                            }])
+                            p_df = pd.concat([p_df, new_trade], ignore_index=True)
+                            save_sheet_data("Portfolio", p_df, p_schema)
+                            st.success(f"Added {clean_p} to Portfolio!")
+                            st.rerun()
                     
                 if actual_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
         else: st.error("Entry Price must be greater than Stop-Loss Price.")
@@ -2067,21 +2068,22 @@ if search_query:
             st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
         else:
             if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
-                w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-                if clean_p_watchlist not in w_df_check["Ticker"].values:
-                    new_row = pd.DataFrame([{
-                        "Ticker": clean_p_watchlist,
-                        "Price": round(ui_cmp, 2),
-                        "Rating": ui_rating,
-                        "Entry Context": ui_ctx,
-                        "Trend Strength": ui_trend,
-                        "Stop Loss": round(ui_stop * 0.98, 2) if ui_stop > 0 else 0.0,
-                        "Vol Footprint": "Pending Scan..."
-                    }])
-                    w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                    save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
-                    st.success(f"Added {clean_p_watchlist} to Watchlist!")
-                    st.rerun()
+                with st.spinner("Syncing to Cloud Database..."):
+                    w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+                    if clean_p_watchlist not in w_df_check["Ticker"].values:
+                        new_row = pd.DataFrame([{
+                            "Ticker": clean_p_watchlist,
+                            "Price": round(ui_cmp, 2),
+                            "Rating": ui_rating,
+                            "Entry Context": ui_ctx,
+                            "Trend Strength": ui_trend,
+                            "Stop Loss": round(ui_stop * 0.98, 2) if ui_stop > 0 else 0.0,
+                            "Vol Footprint": "Pending Scan..."
+                        }])
+                        w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
+                        save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
+                        st.success(f"Added {clean_p_watchlist} to Watchlist!")
+                        st.rerun()
 
     st.divider()
 

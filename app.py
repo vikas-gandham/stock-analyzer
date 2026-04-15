@@ -1636,7 +1636,7 @@ def render_control_center():
                                 fresh_w_df = pd.concat([w_df_pre, pd.DataFrame(new_rows)], ignore_index=True)
                                 save_sheet_data("Watchlist", fresh_w_df, WATCHLIST_COLS)
                                 st.toast(f"✅ Successfully added {len(bulk_selected)} stocks to Watchlist!")
-                                time.sleep(0.5) # Give toast time to render
+                                time.sleep(0.5) 
                                 st.rerun()
             st.markdown("<br>", unsafe_allow_html=True)
             # --- END BULK ADD MODULE ---

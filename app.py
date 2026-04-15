@@ -1934,32 +1934,6 @@ if search_query:
 
 
 
-    # --- Smart Action Buttons (Watchlist) ---
-    clean_p = sanitize_ticker(full_ticker)
-    WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
-    w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-    
-    w_col1, w_col2 = st.columns(2)
-    with w_col1:
-        if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
-            st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
-        else:
-            if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
-                w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-                if clean_p not in w_df_check["Ticker"].values:
-                    new_row = pd.DataFrame([{
-                        "Ticker": clean_p,
-                        "Price": round(ui_cmp, 2),
-                        "Rating": ui_rating,
-                        "Entry Context": ui_ctx,
-                        "Trend Strength": ui_trend,
-                        "Stop Loss": round(ui_stop * 0.98, 2) if ui_stop > 0 else 0.0,
-                        "Vol Footprint": "Pending Scan..."
-                    }])
-                    w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                    save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
-                    st.success(f"Added {clean_p} to Watchlist!")
-                    st.rerun()
 
     # --- 1% Risk Calculator (Decoupled & Synced) ---
     st.subheader("📐 1% Risk Calculator")
@@ -2053,6 +2027,31 @@ if search_query:
                     
                 if actual_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
         else: st.error("Entry Price must be greater than Stop-Loss Price.")
+
+        # --- Smart Action Buttons (Watchlist) ---
+        clean_p_watchlist = sanitize_ticker(full_ticker)
+        WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+        w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+        
+        if not w_df_check.empty and clean_p_watchlist in w_df_check["Ticker"].values:
+            st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
+        else:
+            if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
+                w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+                if clean_p_watchlist not in w_df_check["Ticker"].values:
+                    new_row = pd.DataFrame([{
+                        "Ticker": clean_p_watchlist,
+                        "Price": round(ui_cmp, 2),
+                        "Rating": ui_rating,
+                        "Entry Context": ui_ctx,
+                        "Trend Strength": ui_trend,
+                        "Stop Loss": round(ui_stop * 0.98, 2) if ui_stop > 0 else 0.0,
+                        "Vol Footprint": "Pending Scan..."
+                    }])
+                    w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
+                    save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
+                    st.success(f"Added {clean_p_watchlist} to Watchlist!")
+                    st.rerun()
 
     st.divider()
 

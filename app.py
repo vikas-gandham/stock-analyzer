@@ -1511,7 +1511,9 @@ def render_control_center():
                                 "Trend": f"{t_pts}/2",
                                 "Rating": m_rating,
                                 "Vol Footprint": b_vol_foot,
-                                "_rating_rank": m_score
+                                "_rating_rank": m_score,
+                                "_raw_price": float(b_close),
+                                "_raw_stop": float(b_sup1 * 0.98)
                             })
                         except:
                             continue
@@ -1602,7 +1604,7 @@ def render_control_center():
             bh_col[3].markdown("**Trend**")
             bh_col[4].markdown("**Rating**")
             bh_col[5].markdown("**Vol Footprint**")
-            bh_col[6].markdown("**Action**")
+            bh_col[6].markdown("**Actions**")
 
             for idx, row in b_results.iterrows():
                 # ── Color Logic (Unified with Watchlist) ──
@@ -1628,8 +1630,29 @@ def render_control_center():
                 rb_col[3].markdown(t_html, unsafe_allow_html=True)
                 rb_col[4].markdown(r_html, unsafe_allow_html=True)
                 rb_col[5].write(row["Vol Footprint"])
-                if rb_col[6].button("Analyze", key=f"b_an_{row['RawTicker']}_{idx}", on_click=set_search_ticker, args=(row["RawTicker"],)):
+                if rb_col[6].button("Analyze", key=f"b_an_{row['RawTicker']}_{idx}", use_container_width=True, on_click=set_search_ticker, args=(row["RawTicker"],)):
                     pass
+                
+                if rb_col[6].button("⭐ Watch", key=f"b_w_{row['RawTicker']}_{idx}", use_container_width=True):
+                    clean_p = sanitize_ticker(row["RawTicker"])
+                    WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+                    w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+                    
+                    if clean_p not in w_df_check["Ticker"].values:
+                        new_row = pd.DataFrame([{
+                            "Ticker": clean_p,
+                            "Price": round(row.get("_raw_price", 0.0), 2),
+                            "Rating": row["Rating"],
+                            "Entry Context": row["Entry Context"],
+                            "Trend Strength": row["Trend"],
+                            "Stop Loss": round(row.get("_raw_stop", 0.0), 2),
+                            "Vol Footprint": row["Vol Footprint"]
+                        }])
+                        w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
+                        save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
+                        st.toast(f"✅ Added {clean_p} to Watchlist!")
+                    else:
+                        st.toast(f"⚠️ {clean_p} is already in your Watchlist.")
         else:
             st.info("❌ No stocks passed the scan.")
     else:

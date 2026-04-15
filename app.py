@@ -1606,6 +1606,10 @@ def render_control_center():
             bh_col[5].markdown("**Vol Footprint**")
             bh_col[6].markdown("**Actions**")
 
+            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+            w_df_pre = load_sheet_data("Watchlist", WATCHLIST_COLS)
+            existing_watch = set(w_df_pre["Ticker"].values) if not w_df_pre.empty else set()
+
             for idx, row in b_results.iterrows():
                 # ── Color Logic (Unified with Watchlist) ──
                 # 1. Rating
@@ -1630,15 +1634,17 @@ def render_control_center():
                 rb_col[3].markdown(t_html, unsafe_allow_html=True)
                 rb_col[4].markdown(r_html, unsafe_allow_html=True)
                 rb_col[5].write(row["Vol Footprint"])
-                if rb_col[6].button("Analyze", key=f"b_an_{row['RawTicker']}_{idx}", use_container_width=True, on_click=set_search_ticker, args=(row["RawTicker"],)):
+                clean_p = sanitize_ticker(row["RawTicker"])
+                is_tracked = clean_p in existing_watch
+                
+                btn_c1, btn_c2 = rb_col[6].columns(2)
+                
+                if btn_c1.button("🔎", key=f"b_an_{row['RawTicker']}_{idx}", help="Analyze Setup", use_container_width=True, on_click=set_search_ticker, args=(row["RawTicker"],)):
                     pass
                 
-                if rb_col[6].button("⭐ Watch", key=f"b_w_{row['RawTicker']}_{idx}", use_container_width=True):
-                    clean_p = sanitize_ticker(row["RawTicker"])
-                    WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
-                    w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-                    
-                    if clean_p not in w_df_check["Ticker"].values:
+                if btn_c2.button("⭐", key=f"b_w_{row['RawTicker']}_{idx}", disabled=is_tracked, help="Already in Watchlist" if is_tracked else "Add to Watchlist", use_container_width=True):
+                    fresh_w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
+                    if clean_p not in fresh_w_df["Ticker"].values:
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p,
                             "Price": round(row.get("_raw_price", 0.0), 2),
@@ -1648,9 +1654,10 @@ def render_control_center():
                             "Stop Loss": round(row.get("_raw_stop", 0.0), 2),
                             "Vol Footprint": row["Vol Footprint"]
                         }])
-                        w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                        save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
+                        fresh_w_df = pd.concat([fresh_w_df, new_row], ignore_index=True)
+                        save_sheet_data("Watchlist", fresh_w_df, WATCHLIST_COLS)
                         st.toast(f"✅ Added {clean_p} to Watchlist!")
+                        st.rerun() # Refresh immediately to disable the button
                     else:
                         st.toast(f"⚠️ {clean_p} is already in your Watchlist.")
         else:

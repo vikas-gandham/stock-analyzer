@@ -1734,6 +1734,11 @@ if search_query:
             full_ticker = search_term.upper() + ".NS"
 
     display_label = full_ticker
+    ui_cmp = 0.0
+    ui_stop = 0.0
+    ui_rating = "PENDING"
+    ui_ctx = "PENDING"
+    ui_trend = "0/2"
 
     # --- FETCH DATA & SILENT SYNC ---
     with st.spinner("Fetching market data..."):
@@ -1851,39 +1856,12 @@ if search_query:
             </div>
             '''
             st.markdown(rating_html, unsafe_allow_html=True)
-            
-            # --- Smart Action Buttons (Watchlist) ---
-            clean_p = sanitize_ticker(full_ticker)
-            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
-            w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-            
-            w_col1, w_col2 = st.columns(2)
-            with w_col1:
-                if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
-                    st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
-                else:
-                    if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
-                        w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
-                        if clean_p not in w_df_check["Ticker"].values:
-                            cond_label_add, _, _ = get_market_condition(df)
-                            ctx_add = str(cond_label_add).strip()
-                            for pfx in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
-                                ctx_add = ctx_add.replace(pfx, "")
-                            score_add, t_pts_add, v_pts_add, s_pts_add, f_pts_add, str_pts_add, sma_pts_add, def_pts_add = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
-                            new_row = pd.DataFrame([{
-                                "Ticker": clean_p,
-                                "Price": round(float(latest["Close"]), 2),
-                                "Rating": master_rating,
-                                "Entry Context": ctx_add,
-                                "Trend Strength": f"{t_pts_add}/2",
-                                "Stop Loss": round(support_val * 0.98, 2),
-                                "Vol Footprint": "Pending Scan..."
-                            }])
-                            w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
-                            save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
-                            st.success(f"Added {clean_p} to Watchlist!")
-                            st.rerun()
-            
+            ui_cmp = float(latest["Close"])
+            ui_stop = float(support_val)
+            ui_rating = master_rating
+            cond_label_val, _, _ = get_market_condition(df)
+            ui_ctx = str(cond_label_val).strip().replace("🔵 ", "").replace("🟣 ", "").replace("🟢 ", "").replace("🔴 ", "").replace("🟡 ", "").replace("🚀 ", "")
+            ui_trend = f"{t_points}/2"
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -1950,103 +1928,133 @@ if search_query:
                     st.info(alert["msg"])
 
             st.divider()
-            # --- 1% Risk Calculator (Decoupled & Synced) ---
-            st.subheader("📐 1% Risk Calculator")
-            st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
-            
-            if st.session_state["sync_ticker"] != full_ticker:
-                st.session_state["sync_ticker"] = full_ticker
-                st.session_state["entry_price_key"] = float(latest["Close"])
-                st.session_state["stop_loss_key"] = float(support_val)
-
-            c_calc, c_gap, c_pos = st.columns([4.5, 1, 4.5])
-            with c_calc:
-                capital = st.number_input("Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key")
-                st.session_state["capital_ext"] = capital
-                entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
-                stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
-                manual_qty_input = st.number_input("Manual Quantity (Optional)", min_value=0, value=0, step=1, key="manual_qty_input")
-
-            with c_pos:
-                if entry_price > stop_loss:
-                    max_risk = capital * 0.01
-                    risk_per_share = entry_price - stop_loss
-                    
-                    # 1. How many shares can we buy based on 1% risk limit?
-                    max_shares_by_risk = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
-                    
-                    # 2. How many shares can we actually afford with our cash balance?
-                    max_shares_by_capital = math.floor(capital / entry_price) if entry_price > 0 else 0
-                    
-                    # 3. The auto-suggestion must be the smaller of the two
-                    auto_shares = min(max_shares_by_risk, max_shares_by_capital)
-                    
-                    # Determine which quantity to show and use
-                    # Use manual entry if user typed something, otherwise use auto
-                    final_qty = manual_qty_input if manual_qty_input > 0 else auto_shares
-
-                    if final_qty > 0:
-                        actual_risk = final_qty * risk_per_share
-                        
-                        # UI Display (Back to standard metrics)
-                        st.subheader("📊 Position Size")
-                        r1_c1, r1_c2 = st.columns(2)
-                        
-                        if manual_qty_input > 0:
-                            risk_diff = actual_risk - max_risk
-                            delta_str = f"{'+' if risk_diff > 0 else ''}{format_indian(risk_diff, is_price=True)} vs 1% Limit"
-                            # delta_color='inverse' makes positive numbers (extra risk) red, which is what we want for risk.
-                            r1_c1.metric("Actual Risk (Override)", f"₹{format_indian(actual_risk, is_price=True)}", delta=delta_str, delta_color="inverse")
-                        else:
-                            r1_c1.metric("Max Risk (1%)", f"₹{format_indian(max_risk, is_price=True)}")
-
-                        r1_c2.metric("Risk Per Share", f"₹{format_indian(risk_per_share, is_price=True)}")
-                        
-                        r2_c1, r2_c2 = st.columns(2)
-                        r2_c1.metric("Shares to Buy", f"{final_qty:,}")
-                        actual_deployed = final_qty * entry_price
-                        r2_c2.metric("Capital Deployed", f"₹{format_indian(actual_deployed, is_price=True)}")
-                        
-                        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                        
-                        clean_p = sanitize_ticker(full_ticker)
-                        p_df_check = load_sheet_data("Portfolio", ["Ticker"])
-                        
-                        if not p_df_check.empty and clean_p in p_df_check["Ticker"].values:
-                            st.button("💼 Active in Portfolio", disabled=True, use_container_width=True)
-                            st.caption("⚠️ To adjust this position, delete it from the Live Portfolio table first.")
-                        else:
-                            if st.button("💼 Add to Portfolio", use_container_width=True):
-                                p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
-                                p_df = load_sheet_data("Portfolio", p_schema)
-                                new_trade = pd.DataFrame([{
-                                    "Ticker": clean_p,
-                                    "Buy_Price": entry_price,
-                                    "Initial_Stop": stop_loss,
-                                    "Highest_Trail": stop_loss,
-                                    "Quantity": final_qty,
-                                    "Date_Added": datetime.now(IST).strftime("%Y-%m-%d"),
-                                    "CMP": entry_price,
-                                    "RSI_HTML": "...",
-                                    "T1_HTML": "...",
-                                    "PCT_HTML": "...",
-                                    "Vol_Foot": "...",
-                                    "Verdict_HTML": "<span style='color:gray;'>Pending Scan...</span>",
-                                    "_verdict_rank": -1,
-                                    "_vol_rank": -1
-                                }])
-                                p_df = pd.concat([p_df, new_trade], ignore_index=True)
-                                save_sheet_data("Portfolio", p_df, p_schema)
-                                st.success(f"Added {clean_p} to Portfolio!")
-                                st.rerun()
-                            
-                        if actual_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
-                else: st.error("Entry Price must be greater than Stop-Loss Price.")
-
-            st.divider()
 
         except (IndexError, KeyError) as e:
             st.info(f"Market structure algorithms currently unavailable for **{full_ticker}**.")
+
+
+
+    # --- Smart Action Buttons (Watchlist) ---
+    clean_p = sanitize_ticker(full_ticker)
+    WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+    w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+    
+    w_col1, w_col2 = st.columns(2)
+    with w_col1:
+        if not w_df_check.empty and clean_p in w_df_check["Ticker"].values:
+            st.button("✅ Already in Watchlist", disabled=True, use_container_width=True, key="btn_w_dis")
+        else:
+            if st.button("➕ Add to Watchlist", use_container_width=True, key="btn_w_add"):
+                w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
+                if clean_p not in w_df_check["Ticker"].values:
+                    new_row = pd.DataFrame([{
+                        "Ticker": clean_p,
+                        "Price": round(ui_cmp, 2),
+                        "Rating": ui_rating,
+                        "Entry Context": ui_ctx,
+                        "Trend Strength": ui_trend,
+                        "Stop Loss": round(ui_stop * 0.98, 2) if ui_stop > 0 else 0.0,
+                        "Vol Footprint": "Pending Scan..."
+                    }])
+                    w_df_check = pd.concat([w_df_check, new_row], ignore_index=True)
+                    save_sheet_data("Watchlist", w_df_check, WATCHLIST_COLS)
+                    st.success(f"Added {clean_p} to Watchlist!")
+                    st.rerun()
+
+    # --- 1% Risk Calculator (Decoupled & Synced) ---
+    st.subheader("📐 1% Risk Calculator")
+    st.markdown("_Direct analysis for **" + full_ticker + "** (Auto-synced)._")
+    
+    if st.session_state["sync_ticker"] != full_ticker:
+        st.session_state["sync_ticker"] = full_ticker
+        st.session_state["entry_price_key"] = ui_cmp
+        st.session_state["stop_loss_key"] = ui_stop
+
+    c_calc, c_gap, c_pos = st.columns([4.5, 1, 4.5])
+    with c_calc:
+        capital = st.number_input("Total Account Capital (₹)", min_value=0.0, step=10000.0, key="capital_key")
+        st.session_state["capital_ext"] = capital
+        entry_price = st.number_input("Entry Price (₹)", min_value=0.01, step=0.5, key="entry_price_key")
+        stop_loss = st.number_input("Stop-Loss Price (₹)", min_value=0.01, step=0.5, key="stop_loss_key")
+        manual_qty_input = st.number_input("Manual Quantity (Optional)", min_value=0, value=0, step=1, key="manual_qty_input")
+
+    with c_pos:
+        if entry_price > stop_loss:
+            max_risk = capital * 0.01
+            risk_per_share = entry_price - stop_loss
+            
+            # 1. How many shares can we buy based on 1% risk limit?
+            max_shares_by_risk = math.floor(max_risk / risk_per_share) if risk_per_share > 0 else 0
+            
+            # 2. How many shares can we actually afford with our cash balance?
+            max_shares_by_capital = math.floor(capital / entry_price) if entry_price > 0 else 0
+            
+            # 3. The auto-suggestion must be the smaller of the two
+            auto_shares = min(max_shares_by_risk, max_shares_by_capital)
+            
+            # Determine which quantity to show and use
+            # Use manual entry if user typed something, otherwise use auto
+            final_qty = manual_qty_input if manual_qty_input > 0 else auto_shares
+
+            if final_qty > 0:
+                actual_risk = final_qty * risk_per_share
+                
+                # UI Display (Back to standard metrics)
+                st.subheader("📊 Position Size")
+                r1_c1, r1_c2 = st.columns(2)
+                
+                if manual_qty_input > 0:
+                    risk_diff = actual_risk - max_risk
+                    delta_str = f"{'+' if risk_diff > 0 else ''}{format_indian(risk_diff, is_price=True)} vs 1% Limit"
+                    # delta_color='inverse' makes positive numbers (extra risk) red, which is what we want for risk.
+                    r1_c1.metric("Actual Risk (Override)", f"₹{format_indian(actual_risk, is_price=True)}", delta=delta_str, delta_color="inverse")
+                else:
+                    r1_c1.metric("Max Risk (1%)", f"₹{format_indian(max_risk, is_price=True)}")
+
+                r1_c2.metric("Risk Per Share", f"₹{format_indian(risk_per_share, is_price=True)}")
+                
+                r2_c1, r2_c2 = st.columns(2)
+                r2_c1.metric("Shares to Buy", f"{final_qty:,}")
+                actual_deployed = final_qty * entry_price
+                r2_c2.metric("Capital Deployed", f"₹{format_indian(actual_deployed, is_price=True)}")
+                
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                
+                clean_p = sanitize_ticker(full_ticker)
+                p_df_check = load_sheet_data("Portfolio", ["Ticker"])
+                
+                if not p_df_check.empty and clean_p in p_df_check["Ticker"].values:
+                    st.button("💼 Active in Portfolio", disabled=True, use_container_width=True)
+                    st.caption("⚠️ To adjust this position, delete it from the Live Portfolio table first.")
+                else:
+                    if st.button("💼 Add to Portfolio", use_container_width=True):
+                        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
+                        p_df = load_sheet_data("Portfolio", p_schema)
+                        new_trade = pd.DataFrame([{
+                            "Ticker": clean_p,
+                            "Buy_Price": entry_price,
+                            "Initial_Stop": stop_loss,
+                            "Highest_Trail": stop_loss,
+                            "Quantity": final_qty,
+                            "Date_Added": datetime.now(IST).strftime("%Y-%m-%d"),
+                            "CMP": entry_price,
+                            "RSI_HTML": "...",
+                            "T1_HTML": "...",
+                            "PCT_HTML": "...",
+                            "Vol_Foot": "...",
+                            "Verdict_HTML": "<span style='color:gray;'>Pending Scan...</span>",
+                            "_verdict_rank": -1,
+                            "_vol_rank": -1
+                        }])
+                        p_df = pd.concat([p_df, new_trade], ignore_index=True)
+                        save_sheet_data("Portfolio", p_df, p_schema)
+                        st.success(f"Added {clean_p} to Portfolio!")
+                        st.rerun()
+                    
+                if actual_deployed > capital: st.warning("⚠️ Position exceeds your total capital!")
+        else: st.error("Entry Price must be greater than Stop-Loss Price.")
+
+    st.divider()
 
 # ===================================================================
 # LIVE PORTFOLIO & WATCHLIST — Middle Layer

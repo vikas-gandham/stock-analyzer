@@ -1610,6 +1610,37 @@ def render_control_center():
             w_df_pre = load_sheet_data("Watchlist", WATCHLIST_COLS)
             existing_watch = set(w_df_pre["Ticker"].values) if not w_df_pre.empty else set()
 
+            # --- BULK ADD MODULE ---
+            untracked_results = b_results[~b_results["RawTicker"].apply(sanitize_ticker).isin(existing_watch)]
+            if not untracked_results.empty:
+                with st.expander("🛠️ Bulk Actions (Add Multiple)"):
+                    c_bulk1, c_bulk2 = st.columns([4, 1])
+                    with c_bulk1:
+                        bulk_selected = st.multiselect("Select stocks to add:", options=untracked_results["RawTicker"].tolist(), default=[], help="Only untracked stocks are shown here.")
+                    with c_bulk2:
+                        st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+                        if st.button("⭐ Add Selected", type="primary", use_container_width=True, disabled=len(bulk_selected) == 0):
+                            with st.spinner(f"Batch syncing {len(bulk_selected)} stocks to database..."):
+                                new_rows = []
+                                for t in bulk_selected:
+                                    row_data = untracked_results[untracked_results["RawTicker"] == t].iloc[0]
+                                    new_rows.append({
+                                        "Ticker": sanitize_ticker(t),
+                                        "Price": round(row_data.get("_raw_price", 0.0), 2),
+                                        "Rating": row_data["Rating"],
+                                        "Entry Context": row_data["Entry Context"],
+                                        "Trend Strength": row_data["Trend"],
+                                        "Stop Loss": round(row_data.get("_raw_stop", 0.0), 2),
+                                        "Vol Footprint": row_data["Vol Footprint"]
+                                    })
+                                fresh_w_df = pd.concat([w_df_pre, pd.DataFrame(new_rows)], ignore_index=True)
+                                save_sheet_data("Watchlist", fresh_w_df, WATCHLIST_COLS)
+                                st.toast(f"✅ Successfully added {len(bulk_selected)} stocks to Watchlist!")
+                                time.sleep(0.5) # Give toast time to render
+                                st.rerun()
+            st.markdown("<br>", unsafe_allow_html=True)
+            # --- END BULK ADD MODULE ---
+
             for idx, row in b_results.iterrows():
                 # ── Color Logic (Unified with Watchlist) ──
                 # 1. Rating

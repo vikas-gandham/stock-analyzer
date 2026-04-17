@@ -353,6 +353,7 @@ def get_conn():
         return None
 
 
+@st.cache_data(ttl=300)
 def load_sheet_data(worksheet: str, columns: list) -> pd.DataFrame:
     """Hybrid read: Google Sheets primary, local CSV fallback.
 
@@ -436,6 +437,7 @@ def save_sheet_data(worksheet: str, df: pd.DataFrame, columns: list):
             except Exception:
                 pass  # Never let a disk write block the app
 
+            load_sheet_data.clear()
             return
         except Exception as e:
             if attempt < 2:
@@ -1595,25 +1597,18 @@ def render_control_center():
         st.subheader("🔥 Watchlist Batch Results")
         b_results = st.session_state["batch_results"]
         if not b_results.empty:
-            # Header
-            B_COL_RATIOS = [1.5, 1, 1.5, 1, 1.5, 1.5, 1.2]
-            bh_col = st.columns(B_COL_RATIOS)
-            bh_col[0].markdown("**Ticker**")
-            bh_col[1].markdown("**Price**")
-            bh_col[2].markdown("**Entry Context**")
-            bh_col[3].markdown("**Trend**")
-            bh_col[4].markdown("**Rating**")
-            bh_col[5].markdown("**Vol Footprint**")
-            bh_col[6].markdown("**Actions**")
-
+            # 1. Pre-load Watchlist data first
             WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
             w_df_pre = load_sheet_data("Watchlist", WATCHLIST_COLS)
             existing_watch = set(w_df_pre["Ticker"].values) if not w_df_pre.empty else set()
 
-            # --- BULK ADD MODULE ---
-            untracked_results = b_results[~b_results["RawTicker"].apply(sanitize_ticker).isin(existing_watch)]
+            # 2. --- BULK ADD MODULE (Placed ABOVE headers) ---
+            # Using a bulletproof Python list comprehension to bypass the Pandas .isin(set) bug
+            untracked_tickers = [t for t in b_results["RawTicker"] if sanitize_ticker(t) not in existing_watch]
+            untracked_results = b_results[b_results["RawTicker"].isin(untracked_tickers)]
+
             if not untracked_results.empty:
-                with st.expander("🛠️ Bulk Actions (Add Multiple)"):
+                with st.expander("🛠️ Bulk Actions (Add Multiple)", expanded=False):
                     c_bulk1, c_bulk2 = st.columns([4, 1])
                     with c_bulk1:
                         bulk_selected = st.multiselect("Select stocks to add:", options=untracked_results["RawTicker"].tolist(), default=[], help="Only untracked stocks are shown here.")
@@ -1638,8 +1633,20 @@ def render_control_center():
                                 st.toast(f"✅ Successfully added {len(bulk_selected)} stocks to Watchlist!")
                                 time.sleep(0.5) 
                                 st.rerun()
+            
             st.markdown("<br>", unsafe_allow_html=True)
-            # --- END BULK ADD MODULE ---
+
+            # 3. --- Table Headers (Placed BELOW the Bulk Add module) ---
+            B_COL_RATIOS = [1.5, 1, 1.5, 1, 1.5, 1.5, 1.2]
+            bh_col = st.columns(B_COL_RATIOS)
+            bh_col[0].markdown("**Ticker**")
+            bh_col[1].markdown("**Price**")
+            bh_col[2].markdown("**Entry Context**")
+            bh_col[3].markdown("**Trend**")
+            bh_col[4].markdown("**Rating**")
+            bh_col[5].markdown("**Vol Footprint**")
+            bh_col[6].markdown("**Actions**")
+            st.markdown("---")
 
             for idx, row in b_results.iterrows():
                 # ── Color Logic (Unified with Watchlist) ──
@@ -1957,8 +1964,9 @@ if search_query:
             # --- Chart & Earnings ---
             earnings_date = check_earnings(full_ticker)
             if earnings_date: st.warning(f"🚨 EARNINGS ALERT: {company_name} reports on {earnings_date.strftime('%d %b %Y')}!")
-            fig = build_chart(df, display_label)
-            st.plotly_chart(fig, use_container_width=True)
+            with st.expander("📊 View Advanced Candlestick Chart", expanded=False):
+                fig = build_chart(df, display_label)
+                st.plotly_chart(fig, use_container_width=True)
 
             # --- System Quantitative Report Section ---
             st.subheader("📊 System Quantitative Report")
@@ -2407,68 +2415,73 @@ with j_col2:
         st.session_state["show_journal"] = not st.session_state["show_journal"]
         st.rerun()
 
-# Only execute data loading and rendering if the journal is toggled ON
-if st.session_state["show_journal"]:
-    if st.session_state.get("sheets_error"):
-        st.error("⚠️ Google Sheets Connection Error: Trade Journal is temporarily unavailable.")
-    else:
-        c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
-        c_df = load_sheet_data("ClosedTrades", c_schema)
-
-        # ── Explicit journal backup anchored to project root ────────
-        try:
-            backup_path = os.path.join(BASE_DIR, "db_backup_Journal_HighRes.csv")
-            c_df.to_csv(backup_path, index=False)
-        except Exception:
-            pass  # Never let a disk write block the UI
-
-        if not c_df.empty:
-            # 1. Clean Data for Math
-            c_df["PnL_Value"] = pd.to_numeric(c_df["PnL_Value"], errors='coerce').fillna(0)
-            c_df["PnL_Pct"] = pd.to_numeric(c_df["PnL_Pct"], errors='coerce').fillna(0)
-
-            # 2. Calculate Key Performance Indicators (KPIs)
-            total_trades = len(c_df)
-            winning_trades = len(c_df[c_df["PnL_Pct"] > 0])
-            win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
-
-            net_pnl = c_df["PnL_Value"].sum()
-            avg_return = c_df["PnL_Pct"].mean()
-            best_trade = c_df["PnL_Pct"].max()
-            avg_days = pd.to_numeric(c_df["Days_Held"], errors='coerce').mean()
-
-            # 3. Render Top-Level Metrics
-            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-            a1, a2, a3, a4, a5 = st.columns(5)
-
-            a1.metric("Total Trades", total_trades)
-            a2.metric("Win Rate", f"{win_rate:.1f}%")
-
-            pnl_color = "normal" if net_pnl >= 0 else "inverse"
-            pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
-            a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
-
-            a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
-            a5.metric("Best Trade", f"{best_trade:.2f}%")
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # 4. Render Historical Ledger
-            st.markdown("##### 📜 Historical Ledger")
-
-            display_c_df = c_df.copy()
-            display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
-            display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
-            display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-            display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-
-            display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
-            st.dataframe(display_c_df, use_container_width=True, hide_index=True)
-
+@st.fragment
+def render_trade_journal():
+    # Only execute data loading and rendering if the journal is toggled ON
+    if st.session_state["show_journal"]:
+        if st.session_state.get("sheets_error"):
+            st.error("⚠️ Google Sheets Connection Error: Trade Journal is temporarily unavailable.")
         else:
-            st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")
-else:
-    st.info("📂 Click **Open Journal** to load historical analytics and trade history.")
+            c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
+            c_df = load_sheet_data("ClosedTrades", c_schema)
+
+            # ── Explicit journal backup anchored to project root ────────
+            try:
+                backup_path = os.path.join(BASE_DIR, "db_backup_Journal_HighRes.csv")
+                c_df.to_csv(backup_path, index=False)
+            except Exception:
+                pass  # Never let a disk write block the UI
+
+            if not c_df.empty:
+                # 1. Clean Data for Math
+                c_df["PnL_Value"] = pd.to_numeric(c_df["PnL_Value"], errors='coerce').fillna(0)
+                c_df["PnL_Pct"] = pd.to_numeric(c_df["PnL_Pct"], errors='coerce').fillna(0)
+
+                # 2. Calculate Key Performance Indicators (KPIs)
+                total_trades = len(c_df)
+                winning_trades = len(c_df[c_df["PnL_Pct"] > 0])
+                win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
+
+                net_pnl = c_df["PnL_Value"].sum()
+                avg_return = c_df["PnL_Pct"].mean()
+                best_trade = c_df["PnL_Pct"].max()
+                avg_days = pd.to_numeric(c_df["Days_Held"], errors='coerce').mean()
+
+                # 3. Render Top-Level Metrics
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                a1, a2, a3, a4, a5 = st.columns(5)
+
+                a1.metric("Total Trades", total_trades)
+                a2.metric("Win Rate", f"{win_rate:.1f}%")
+
+                pnl_color = "normal" if net_pnl >= 0 else "inverse"
+                pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
+                a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
+
+                a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
+                a5.metric("Best Trade", f"{best_trade:.2f}%")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # 4. Render Historical Ledger
+                st.markdown("##### 📜 Historical Ledger")
+
+                display_c_df = c_df.copy()
+                display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
+                display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
+                display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+                display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+
+                display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
+                st.dataframe(display_c_df, use_container_width=True, hide_index=True)
+
+            else:
+                st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")
+    else:
+        st.info("📂 Click **Open Journal** to load historical analytics and trade history.")
+
+# Call the function
+render_trade_journal()
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 

@@ -2281,6 +2281,22 @@ WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength"
 w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
 
 if not w_df.empty:
+    with st.expander("🛠️ Bulk Actions (Delete Multiple)", expanded=False):
+        b_col1, b_col2 = st.columns([4, 1])
+        with b_col1:
+            bulk_selected = st.multiselect("Select stocks to remove:", options=w_df["Ticker"].unique().tolist())
+        with b_col2:
+            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️ Delete Selected", disabled=len(bulk_selected) == 0, use_container_width=True):
+                with st.spinner(f"Batch removing {len(bulk_selected)} stocks from database..."):
+                    w_df = w_df[~w_df["Ticker"].isin(bulk_selected)]
+                    w_df["Rating"] = w_df["Rating"].astype(str).replace({"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"})
+                    save_sheet_data("Watchlist", w_df, WATCHLIST_COLS)
+                    st.toast(f"Removed {len(bulk_selected)} stocks from Watchlist!")
+                    import time
+                    time.sleep(0.5)
+                    st.rerun()
+
     display_rows = []
     for idx, row in w_df.iterrows():
         ticker = row["Ticker"]

@@ -264,13 +264,13 @@ def ensure_worksheets_exist(conn):
         try:
             conn.read(worksheet="Watchlist", ttl=0)
         except Exception:
-            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]))
+            conn.create(worksheet="Watchlist", data=pd.DataFrame(columns=["Ticker", "Price", "50DMA Ext", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]))
         
         # 2. Portfolio
         try:
             conn.read(worksheet="Portfolio", ttl=0)
         except Exception:
-            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]))
+            conn.create(worksheet="Portfolio", data=pd.DataFrame(columns=["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "50DMA Ext", "Verdict_HTML", "_verdict_rank", "_vol_rank"]))
 
         # 3. Metadata (Tracking Scans)
         try:
@@ -472,7 +472,7 @@ def background_batch_scan():
 
     with st.spinner("🚀 Running Automated Market Scan..."):
         # 1. Portfolio Scan
-        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
+        p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "50DMA Ext", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
         p_df = load_sheet_data("Portfolio", p_schema)
         if not p_df.empty:
             for idx, row in p_df.iterrows():
@@ -495,7 +495,7 @@ def background_batch_scan():
                             log_alert(f"🛡️ PROFIT SECURED: Trailing Stop for {ticker} ratcheted UP to ₹{format_indian(s1, is_price=True)}!", icon="🛡️")
                             high_trail = float(s1)
                             p_df.at[idx, "Highest_Trail"] = high_trail
-
+ 
                         # ── UI Data Generation ────────────
                         # 1. Price
                         p_df.at[idx, "CMP"] = round(float(cmp_val), 2)
@@ -544,15 +544,34 @@ def background_batch_scan():
                         p_df.at[idx, "Verdict_HTML"] = f"<span style='color:{v_color}; font-weight:bold;'>{verdict}</span>"
                         p_df.at[idx, "_verdict_rank"] = v_rank
                         
+                        # 7. 50DMA Ext HTML
+                        dma_ext_pct = 0.0
+                        if 'SMA_50' in df.columns:
+                            sma_val = df['SMA_50'].iloc[-1]
+                            close_val = df['Close'].iloc[-1]
+                            if pd.notna(sma_val) and sma_val > 0:
+                                dma_ext_pct = ((close_val - sma_val) / sma_val) * 100
+                        
+                        if dma_ext_pct > 0 and dma_ext_pct <= 5.0:
+                            ext_color = "#00D4AA"
+                        elif dma_ext_pct > 5.0 and dma_ext_pct <= 10.0:
+                            ext_color = "#FFD700"
+                        else:
+                            ext_color = "#FF4B4B"
+                        
+                        sign = "+" if dma_ext_pct > 0 else ""
+                        ext_html = f"<span style='color:{ext_color}; font-weight:bold;'>{sign}{dma_ext_pct:.1f}%</span>"
+                        p_df.at[idx, "50DMA Ext"] = ext_html
+                        
                         if "🔴 SELL" in verdict or "🟡 TRIM" in verdict:
                             log_alert(f"⚠️ PORTFOLIO ALERT: {verdict} on {ticker}", icon="🚨")
-
+ 
                 except: pass
-
+ 
             save_sheet_data("Portfolio", p_df, p_schema)
 
         # 2. Watchlist Scan
-        w_schema = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+        w_schema = ["Ticker", "Price", "50DMA Ext", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
         w_df = load_sheet_data("Watchlist", w_schema)
         if not w_df.empty:
             for idx, row in w_df.iterrows():
@@ -566,35 +585,54 @@ def background_batch_scan():
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
                         support_val = latest.get("Active_Support", latest["Close"])
-
+ 
                         # Price
                         w_df.at[idx, "Price"] = round(float(latest["Close"]), 2)
-
+ 
+                        # 50DMA Ext
+                        dma_ext_pct = 0.0
+                        if 'SMA_50' in df.columns:
+                            sma_val = df['SMA_50'].iloc[-1]
+                            close_val = df['Close'].iloc[-1]
+                            if pd.notna(sma_val) and sma_val > 0:
+                                dma_ext_pct = ((close_val - sma_val) / sma_val) * 100
+                        
+                        if dma_ext_pct > 0 and dma_ext_pct <= 5.0:
+                            ext_color = "#00D4AA"
+                        elif dma_ext_pct > 5.0 and dma_ext_pct <= 10.0:
+                            ext_color = "#FFD700"
+                        else:
+                            ext_color = "#FF4B4B"
+                        
+                        sign = "+" if dma_ext_pct > 0 else ""
+                        ext_html = f"<span style='color:{ext_color}; font-weight:bold;'>{sign}{dma_ext_pct:.1f}%</span>"
+                        w_df.at[idx, "50DMA Ext"] = ext_html
+ 
                         # Rating
                         if score >= 7: w_rating = "STRONG BUY"
                         elif score >= 5: w_rating = "MODERATE BUY"
                         elif score >= 3: w_rating = "WATCHLIST / HOLD"
                         else: w_rating = "AVOID"
                         w_df.at[idx, "Rating"] = w_rating
-
+ 
                         # Vol Footprint
                         v_rat = latest["Volume"] / (latest["Vol_20SMA"] if latest["Vol_20SMA"] > 0 else 1)
                         is_gr = latest["Close"] >= latest["Open"]
                         foot = "🟢 Accumulation" if v_rat >= 1.5 and is_gr else "🔴 DISTRIBUTION" if v_rat >= 1.5 else "⚪ Normal"
                         w_df.at[idx, "Vol Footprint"] = foot
-
+ 
                         if w_rating == "STRONG BUY" or "🟢 Accumulation" in foot:
                             log_alert(f"🔥 Watchlist Alert: Strong setup on {ticker}", icon="🔥")
-
+ 
                         # Entry Context
                         context_str = str(label).strip()
                         for prefix in ["🔵 ", "🟣 ", "🟢 ", "🔴 ", "🟡 ", "🚀 "]:
                             context_str = context_str.replace(prefix, "")
                         w_df.at[idx, "Entry Context"] = context_str
-
+ 
                         # Trend Strength
                         w_df.at[idx, "Trend Strength"] = f"{t_pts}/2"
-
+ 
                         # Stop Loss
                         w_df.at[idx, "Stop Loss"] = round(support_val * 0.98, 2)
                 except: pass
@@ -1185,14 +1223,19 @@ def fetch_news(company_name: str) -> list[dict]:
 
 
 @st.cache_data(ttl=3600)
-def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0, wick_ratio=0, low_price=0, polarity_state="RANGE"):
+def generate_swing_report(price, support, resistance, vol_surge, is_green, high_52w, master_rating, s1_strength=0, r_strength=0, sma_pts=0, wick_ratio=0, low_price=0, polarity_state="RANGE", dma_ext_pct=0.0):
     bullets = []
     
     if polarity_state == "BREAKOUT":
         bullets.append({"type": "success", "msg": "🔄 **Polarity Shift (Breakout):** Price has broken prior resistance. Old resistance is now your new Active Support floor."})
 
-    if sma_pts == 1:
-        bullets.append({"type": "success", "msg": "🚀 **Launchpad Position:** Stock is trading within 10% of its 50-DMA with positive momentum. This is a high-probability 'Ignition Zone' for early swing trades."})
+    if sma_pts == 2:
+        bullets.append({"type": "success", "msg": "🚀 **Launchpad Position:** Stock is trading within 5% of its 50-DMA with positive momentum. This is a perfect confluence / launchpad zone for early swing trades."})
+    elif sma_pts == 1:
+        bullets.append({"type": "info", "msg": "📈 **Trending but Stretched:** Stock is trading between 5% and 10% above its 50-DMA. The trend is positive but entry is slightly extended."})
+
+    if dma_ext_pct > 10.0:
+        bullets.append({"type": "warning", "msg": "⚠️ **Overextended:** Stock is trading more than 10% above its 50-DMA. Entry risk is high; consider waiting for a pullback or consolidation."})
 
     if wick_ratio > 1.5 and low_price < support:
         bullets.append({"type": "success", "msg": "🛡️ **Bear Trap Detected:** Price dipped below support but buyers aggressively drove it back up (Long lower wick). This is a high-conviction sign of institutional defense."})
@@ -1377,8 +1420,13 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
         sma_val = df['SMA_50'].iloc[-1]
         close_val = df['Close'].iloc[-1]
         if pd.notna(sma_val) and sma_val > 0:
-            if close_val > sma_val and close_val < (sma_val * 1.1):
+            dma_ext_pct = ((close_val - sma_val) / sma_val) * 100
+            if dma_ext_pct > 0 and dma_ext_pct <= 5.0:
+                sma_pts = 2
+            elif dma_ext_pct > 5.0 and dma_ext_pct <= 10.0:
                 sma_pts = 1
+            else:
+                sma_pts = 0
 
     # 6. Support Defense (Bear Trap / Divergence)
     defense_pts = 0
@@ -1488,6 +1536,23 @@ def render_control_center():
                             b_funda = fetch_fundamentals(t_sym)
                             m_score, t_pts, _, _, _, _, _, _ = calculate_master_score(b_df, b_funda)
 
+                            # 2b. Calculate 50 DMA extension percentage
+                            b_dma_ext_pct = 0.0
+                            if 'SMA_50' in b_df.columns:
+                                b_sma_val = b_df['SMA_50'].iloc[-1]
+                                if pd.notna(b_sma_val) and b_sma_val > 0:
+                                    b_dma_ext_pct = ((b_close - b_sma_val) / b_sma_val) * 100
+                            
+                            if b_dma_ext_pct > 0 and b_dma_ext_pct <= 5.0:
+                                b_ext_color = "#00D4AA"
+                            elif b_dma_ext_pct > 5.0 and b_dma_ext_pct <= 10.0:
+                                b_ext_color = "#FFD700"
+                            else:
+                                b_ext_color = "#FF4B4B"
+                            
+                            b_sign = "+" if b_dma_ext_pct > 0 else ""
+                            b_ext_html = f"<span style='color:{b_ext_color}; font-weight:bold;'>{b_sign}{b_dma_ext_pct:.1f}%</span>"
+
                             # 3. Determine Standard Rating
                             if m_score >= 7: m_rating = "STRONG BUY"
                             elif m_score >= 5: m_rating = "MODERATE BUY"
@@ -1511,6 +1576,7 @@ def render_control_center():
                                 "Price": format_indian(round(b_close, 2), is_price=True),
                                 "Entry Context": ctx_clean,
                                 "Trend": f"{t_pts}/2",
+                                "50DMA Ext": b_ext_html,
                                 "Rating": m_rating,
                                 "Vol Footprint": b_vol_foot,
                                 "_rating_rank": m_score,
@@ -1598,7 +1664,7 @@ def render_control_center():
         b_results = st.session_state["batch_results"]
         if not b_results.empty:
             # 1. Pre-load Watchlist data first
-            WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+            WATCHLIST_COLS = ["Ticker", "Price", "50DMA Ext", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
             w_df_pre = load_sheet_data("Watchlist", WATCHLIST_COLS)
             existing_watch = set(w_df_pre["Ticker"].values) if not w_df_pre.empty else set()
 
@@ -1622,6 +1688,7 @@ def render_control_center():
                                     new_rows.append({
                                         "Ticker": sanitize_ticker(t),
                                         "Price": round(row_data.get("_raw_price", 0.0), 2),
+                                        "50DMA Ext": row_data["50DMA Ext"],
                                         "Rating": row_data["Rating"],
                                         "Entry Context": row_data["Entry Context"],
                                         "Trend Strength": row_data["Trend"],
@@ -1637,15 +1704,16 @@ def render_control_center():
             st.markdown("<br>", unsafe_allow_html=True)
 
             # 3. --- Table Headers (Placed BELOW the Bulk Add module) ---
-            B_COL_RATIOS = [1.5, 1, 1.5, 1, 1.5, 1.5, 1.2]
+            B_COL_RATIOS = [1.5, 1.0, 1.5, 1.0, 1.2, 1.5, 1.5, 1.2]
             bh_col = st.columns(B_COL_RATIOS)
             bh_col[0].markdown("**Ticker**")
             bh_col[1].markdown("**Price**")
             bh_col[2].markdown("**Entry Context**")
             bh_col[3].markdown("**Trend**")
-            bh_col[4].markdown("**Rating**")
-            bh_col[5].markdown("**Vol Footprint**")
-            bh_col[6].markdown("**Actions**")
+            bh_col[4].markdown("**50DMA Ext**")
+            bh_col[5].markdown("**Rating**")
+            bh_col[6].markdown("**Vol Footprint**")
+            bh_col[7].markdown("**Actions**")
             st.markdown("---")
 
             for idx, row in b_results.iterrows():
@@ -1670,12 +1738,13 @@ def render_control_center():
                 rb_col[1].write(f"₹{row['Price']}")
                 rb_col[2].markdown(c_html, unsafe_allow_html=True)
                 rb_col[3].markdown(t_html, unsafe_allow_html=True)
-                rb_col[4].markdown(r_html, unsafe_allow_html=True)
-                rb_col[5].write(row["Vol Footprint"])
+                rb_col[4].markdown(row["50DMA Ext"], unsafe_allow_html=True)
+                rb_col[5].markdown(r_html, unsafe_allow_html=True)
+                rb_col[6].write(row["Vol Footprint"])
                 clean_p = sanitize_ticker(row["RawTicker"])
                 is_tracked = clean_p in existing_watch
                 
-                btn_c1, btn_c2 = rb_col[6].columns(2)
+                btn_c1, btn_c2 = rb_col[7].columns(2)
                 
                 if btn_c1.button("🔎", key=f"b_an_{row['RawTicker']}_{idx}", help="Analyze Setup", use_container_width=True, on_click=set_search_ticker, args=(row["RawTicker"],)):
                     pass
@@ -1686,6 +1755,7 @@ def render_control_center():
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p,
                             "Price": round(row.get("_raw_price", 0.0), 2),
+                            "50DMA Ext": row["50DMA Ext"],
                             "Rating": row["Rating"],
                             "Entry Context": row["Entry Context"],
                             "Trend Strength": row["Trend"],
@@ -1919,7 +1989,7 @@ if search_query:
             <div style="text-align: center; padding: 10px; margin: 15px 0; border-radius: 8px; border: 2px solid {rating_color_hex}; background: {rating_color_hex}1A;">
                 <div style="font-size: 1.8em; font-weight: bold; margin: 0; color: {rating_color_hex};">MASTER ALGORITHMIC RATING: {master_rating}</div>
                 <div style="font-size: 0.9em; color: gray; margin-top: 5px;">
-                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Str: {strength_pts}/1 | SMA: {sma_pts}/1 | Def: {def_pts}/1 | R-Touches: {r_str}
+                    Trend: {t_points}/2 | Vol: {v_points}/2 | Safety: {s_points}/2 | Funda: {f_points}/2 | Str: {strength_pts}/1 | SMA: {sma_pts}/2 | Def: {def_pts}/1 | R-Touches: {r_str}
                 </div>
             </div>
             '''
@@ -1930,6 +2000,24 @@ if search_query:
             cond_label_val, _, _ = get_market_condition(df)
             ui_ctx = str(cond_label_val).strip().replace("🔵 ", "").replace("🟣 ", "").replace("🟢 ", "").replace("🔴 ", "").replace("🟡 ", "").replace("🚀 ", "")
             ui_trend = f"{t_points}/2"
+
+            # Calculate 50 DMA extension for individual ticker
+            ui_dma_ext_pct = 0.0
+            if 'SMA_50' in df.columns:
+                sma_val_ui = df['SMA_50'].iloc[-1]
+                close_val_ui = df['Close'].iloc[-1]
+                if pd.notna(sma_val_ui) and sma_val_ui > 0:
+                    ui_dma_ext_pct = ((close_val_ui - sma_val_ui) / sma_val_ui) * 100
+            
+            if ui_dma_ext_pct > 0 and ui_dma_ext_pct <= 5.0:
+                ui_dma_ext_color = "#00D4AA"
+            elif ui_dma_ext_pct > 5.0 and ui_dma_ext_pct <= 10.0:
+                ui_dma_ext_color = "#FFD700"
+            else:
+                ui_dma_ext_color = "#FF4B4B"
+            
+            ui_sign = "+" if ui_dma_ext_pct > 0 else ""
+            ui_dma_ext_html = f"<span style='color:{ui_dma_ext_color}; font-weight:bold;'>{ui_sign}{ui_dma_ext_pct:.1f}%</span>"
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -1983,7 +2071,8 @@ if search_query:
                 sma_pts=sma_pts,
                 wick_ratio=df['Wick_Ratio'].iloc[-1] if 'Wick_Ratio' in df.columns else 0,
                 low_price=latest['Low'],
-                polarity_state=df["Polarity_State"].iloc[-1] if "Polarity_State" in df.columns else "RANGE"
+                polarity_state=df["Polarity_State"].iloc[-1] if "Polarity_State" in df.columns else "RANGE",
+                dma_ext_pct=ui_dma_ext_pct
             )
             
             for alert in alerts:
@@ -2072,7 +2161,7 @@ if search_query:
                 else:
                     if st.button("💼 Add to Portfolio", use_container_width=True):
                         with st.spinner("Syncing to Cloud Database..."):
-                            p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
+                            p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "50DMA Ext", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
                             p_df = load_sheet_data("Portfolio", p_schema)
                             new_trade = pd.DataFrame([{
                                 "Ticker": clean_p,
@@ -2086,6 +2175,7 @@ if search_query:
                                 "T1_HTML": "...",
                                 "PCT_HTML": "...",
                                 "Vol_Foot": "...",
+                                "50DMA Ext": ui_dma_ext_html,
                                 "Verdict_HTML": "<span style='color:gray;'>Pending Scan...</span>",
                                 "_verdict_rank": -1,
                                 "_vol_rank": -1
@@ -2100,7 +2190,7 @@ if search_query:
 
         # --- Smart Action Buttons (Watchlist) ---
         clean_p_watchlist = sanitize_ticker(full_ticker)
-        WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+        WATCHLIST_COLS = ["Ticker", "Price", "50DMA Ext", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
         w_df_check = load_sheet_data("Watchlist", WATCHLIST_COLS)
         
         if not w_df_check.empty and clean_p_watchlist in w_df_check["Ticker"].values:
@@ -2113,6 +2203,7 @@ if search_query:
                         new_row = pd.DataFrame([{
                             "Ticker": clean_p_watchlist,
                             "Price": round(ui_cmp, 2),
+                            "50DMA Ext": ui_dma_ext_html,
                             "Rating": ui_rating,
                             "Entry Context": ui_ctx,
                             "Trend Strength": ui_trend,
@@ -2136,7 +2227,7 @@ st.subheader("💼 Live Portfolio")
 if st.session_state["sheets_error"]:
     st.error("⚠️ Google Sheets Connection Error: Portfolio management is temporarily unavailable.")
 
-p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
+p_schema = ["Ticker", "Buy_Price", "Initial_Stop", "Highest_Trail", "Quantity", "Date_Added", "CMP", "RSI_HTML", "T1_HTML", "PCT_HTML", "Vol_Foot", "50DMA Ext", "Verdict_HTML", "_verdict_rank", "_vol_rank"]
 p_df = load_sheet_data("Portfolio", p_schema)
 if not p_df.empty:
     port_display_rows = []
@@ -2161,12 +2252,14 @@ if not p_df.empty:
         if not v_html or pd.isna(v_html) or str(v_html).strip().lower() in ["nan", "none", ""]:
             v_html = "<span style='color:gray;'>Pending Scan...</span>"
             rsi_h, t1_h, pct_h, v_foot = "...", "...", "...", "..."
+            ext_h = "..."
             v_rank, vol_rank = -1, -1
         else:
             rsi_h = row.get("RSI_HTML", "...")
             t1_h = row.get("T1_HTML", "...")
             pct_h = row.get("PCT_HTML", "...")
             v_foot = row.get("Vol_Foot", "...")
+            ext_h = row.get("50DMA Ext", "...")
             v_rank = row.get("_verdict_rank", -1)
             vol_rank = row.get("_vol_rank", -1)
 
@@ -2192,6 +2285,7 @@ if not p_df.empty:
             "T1_HTML": t1_h,
             "PCT_HTML": pct_h,
             "Vol_Foot": v_foot,
+            "50DMA_Ext": ext_h,
             "Verdict_HTML": v_html
         })
 
@@ -2200,9 +2294,9 @@ if not p_df.empty:
         if "Verdict" in p_sort: port_display_rows.sort(key=lambda x: x.get("_verdict_rank", -1))
         elif "Volume" in p_sort: port_display_rows.sort(key=lambda x: x.get("_vol_rank", -1), reverse=True)
 
-        # 12-column header
-        P_COL_LAYOUT = [1.5, 1.1, 1.1, 1.1, 1.2, 1.0, 1.5, 1.2, 1.8, 1.8, 0.9, 0.9]
-        HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "Verdict", "Analyze", "Close"]
+        # 13-column header
+        P_COL_LAYOUT = [1.5, 1.1, 1.1, 1.1, 1.2, 1.0, 1.5, 1.2, 1.8, 1.2, 1.8, 0.9, 0.9]
+        HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "50DMA Ext", "Verdict", "Analyze", "Close"]
         h_col = st.columns(P_COL_LAYOUT)
         for col, header in zip(h_col, HEADERS):
             col.markdown(f"**{header}**")
@@ -2219,9 +2313,10 @@ if not p_df.empty:
             r_col[6].markdown(pr["T1_HTML"], unsafe_allow_html=True)
             r_col[7].markdown(pr["PCT_HTML"], unsafe_allow_html=True)
             r_col[8].write(pr["Vol_Foot"])
-            r_col[9].markdown(pr["Verdict_HTML"], unsafe_allow_html=True)
-            if r_col[10].button("Analyze", key=f"p_an_{pr['_ticker']}_{pr['_idx']}", on_click=set_search_ticker, args=(pr["_ticker"],)): pass
-            if r_col[11].button("Log & Close", key=f"p_close_{pr['_ticker']}_{pr['_idx']}"):
+            r_col[9].markdown(pr["50DMA_Ext"], unsafe_allow_html=True)
+            r_col[10].markdown(pr["Verdict_HTML"], unsafe_allow_html=True)
+            if r_col[11].button("Analyze", key=f"p_an_{pr['_ticker']}_{pr['_idx']}", on_click=set_search_ticker, args=(pr["_ticker"],)): pass
+            if r_col[12].button("Log & Close", key=f"p_close_{pr['_ticker']}_{pr['_idx']}"):
                 with st.spinner("Archiving trade..."):
                     # 1. Load Journal
                     c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
@@ -2277,7 +2372,7 @@ if st.session_state.get("sheets_error"):
 
 
 
-WATCHLIST_COLS = ["Ticker", "Price", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
+WATCHLIST_COLS = ["Ticker", "Price", "50DMA Ext", "Rating", "Entry Context", "Trend Strength", "Stop Loss", "Vol Footprint"]
 w_df = load_sheet_data("Watchlist", WATCHLIST_COLS)
 
 if not w_df.empty:
@@ -2309,8 +2404,11 @@ if not w_df.empty:
         ctx_live = str(row.get("Entry Context", "N/A"))
         t_pts_w = str(row.get("Trend Strength", "0/2"))
         w_vol_foot = str(row.get("Vol Footprint", "⚪ Normal"))
+        w_dma_ext = str(row.get("50DMA Ext", "N/A"))
         if w_vol_foot.strip().lower() in ["nan", "none", ""]:
             w_vol_foot = "Pending Scan..."
+        if w_dma_ext.strip().lower() in ["nan", "none", ""]:
+            w_dma_ext = "Pending Scan..."
         
         # Rankings for sorting (Fallback to logical mappings if not present)
         # Rating Rank
@@ -2340,6 +2438,7 @@ if not w_df.empty:
             "_vol_rank": v_rank,
             "Ticker": ticker,
             "Price": f"₹{format_indian(w_cmp, is_price=True)}",
+            "50DMA Ext": w_dma_ext,
             "Rating": w_rating,
             "Entry Context": ctx_live,
             "Trend": t_pts_w,
@@ -2353,8 +2452,8 @@ if not w_df.empty:
         elif "Trend" in w_sort: display_rows.sort(key=lambda x: x.get("_trend_rank", -1), reverse=True)
         elif "Volume" in w_sort: display_rows.sort(key=lambda x: x.get("_vol_rank", -1), reverse=True)
         
-        COL_LAYOUT = [1.5, 1.2, 1.5, 1.0, 1.5, 1.8, 1, 1]
-        HEADERS = ["Ticker", "Price", "Entry Context", "Trend", "Rating", "Vol Footprint", "Analyze", "Del"]
+        COL_LAYOUT = [1.5, 1.2, 1.5, 1.0, 1.2, 1.5, 1.8, 1, 1]
+        HEADERS = ["Ticker", "Price", "Entry Context", "Trend", "50DMA Ext", "Rating", "Vol Footprint", "Analyze", "Del"]
 
         # Header row
         h_cols = st.columns(COL_LAYOUT)
@@ -2399,11 +2498,12 @@ if not w_df.empty:
             r_cols[1].write(dr["Price"])
             r_cols[2].markdown(ctx_html, unsafe_allow_html=True)
             r_cols[3].markdown(trend_html, unsafe_allow_html=True)
-            r_cols[4].markdown(rating_html, unsafe_allow_html=True)
-            r_cols[5].write(dr["Vol Footprint"])
-            if r_cols[6].button("Analyze", key=f"an_{dr['_ticker']}_{dr['_idx']}", use_container_width=True, on_click=set_search_ticker, args=(dr["_ticker"],)):
+            r_cols[4].markdown(dr["50DMA Ext"], unsafe_allow_html=True)
+            r_cols[5].markdown(rating_html, unsafe_allow_html=True)
+            r_cols[6].write(dr["Vol Footprint"])
+            if r_cols[7].button("Analyze", key=f"an_{dr['_ticker']}_{dr['_idx']}", use_container_width=True, on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
-            if r_cols[7].button("🗑️", key=f"del_{dr['_ticker']}_{dr['_idx']}"):
+            if r_cols[8].button("🗑️", key=f"del_{dr['_ticker']}_{dr['_idx']}"):
                 w_df = w_df.drop(dr["_idx"])
                 w_df["Rating"] = w_df["Rating"].astype(str).replace(
                     {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}

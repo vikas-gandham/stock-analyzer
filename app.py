@@ -482,7 +482,7 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(df, funda)
+                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts, is_fk = calculate_master_score(df, funda)
                         
                         s1 = df["Active_Support"].iloc[-1]
                         cmp_val = df["Close"].iloc[-1]
@@ -581,7 +581,7 @@ def background_batch_scan():
                     if not df.empty:
                         df = compute_indicators(df)
                         funda = fetch_fundamentals(ticker)
-                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts = calculate_master_score(df, funda)
+                        score, t_pts, v_pts, s_pts, f_pts, str_pts, sma_pts, def_pts, is_fk = calculate_master_score(df, funda)
                         label, _, _ = get_market_condition(df)
                         latest = df.iloc[-1]
                         support_val = latest.get("Active_Support", latest["Close"])
@@ -613,6 +613,11 @@ def background_batch_scan():
                         elif score >= 5: w_rating = "MODERATE BUY"
                         elif score >= 3: w_rating = "WATCHLIST / HOLD"
                         else: w_rating = "AVOID"
+
+                        # Falling Knife Override
+                        if is_fk and w_rating in ["STRONG BUY", "MODERATE BUY"]:
+                            w_rating = "WATCHLIST / HOLD"
+
                         w_df.at[idx, "Rating"] = w_rating
  
                         # Vol Footprint
@@ -1047,6 +1052,17 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Bullish RSI Divergence (Simple): Is RSI higher than 3 days ago while price is lower?
     df['RSI_Rising'] = df['RSI_14'] > df['RSI_14'].shift(3)
 
+    # Prevent lag traps & falling knives technical inputs
+    if 'SMA_50' in df.columns:
+        df['SMA_50_prev'] = df['SMA_50'].shift(1)
+    else:
+        df['SMA_50_prev'] = 0.0
+
+    if 'Close' in df.columns and len(df) >= 6:
+        df['return_1w'] = ((df['Close'] - df['Close'].shift(5)) / df['Close'].shift(5).replace(0, 0.01)) * 100
+    else:
+        df['return_1w'] = 0.0
+
     return df.fillna(0)
 
 
@@ -1356,9 +1372,20 @@ def fetch_fundamentals(ticker: str):
             if debt_to_equity > 5.0: debt_to_equity /= 100
         else: debt_to_equity = 0.0
         
-        return {"roce": roce, "debt_to_equity": debt_to_equity}
+        profit_growth = info.get("earningsGrowth") or info.get("quarterlyProfitGrowth", 0)
+        if profit_growth is not None:
+            try:
+                profit_growth = float(profit_growth)
+                if -2.0 < profit_growth < 2.0 and profit_growth != 0.0:
+                    profit_growth *= 100
+            except (ValueError, TypeError):
+                profit_growth = 0.0
+        else:
+            profit_growth = 0.0
+
+        return {"roce": roce, "debt_to_equity": debt_to_equity, "yoy_quarterly_profit_growth": profit_growth}
     except Exception:
-        return {"roce": 0.0, "debt_to_equity": 0.0}
+        return {"roce": 0.0, "debt_to_equity": 0.0, "yoy_quarterly_profit_growth": 0.0}
 
 
 @st.cache_data(ttl=3600)
@@ -1380,7 +1407,7 @@ def fetch_market_cap(ticker: str) -> str:
 
 def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
     """Calculate the 11-point Master Rating score."""
-    if df.empty: return 0, 0, 0, 0, 0, 0, 0, 0
+    if df.empty: return 0, 0, 0, 0, 0, 0, 0, 0, False
     latest = df.iloc[-1]
     support_val = df["Active_Support"].iloc[-1]
     resistance_val = df["Active_Resistance"].iloc[-1]
@@ -1415,25 +1442,36 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
 
     # 4. Funda
     f_points = 0
-    if fundamentals["roce"] > 15: f_points += 1
-    if fundamentals["debt_to_equity"] < 0.5: f_points += 1
+    if fundamentals.get("roce", 0) > 15: f_points += 1
+    if fundamentals.get("debt_to_equity", 99) < 0.5: f_points += 1
+    
+    # Fundamental Guardrail
+    profit_growth = fundamentals.get("yoy_quarterly_profit_growth", 0.0)
+    if profit_growth < 15.0:
+        f_points = 0
     
     # New Layer 3: Confluence
     strength_pts = 1 if df.get("S1_Strength", pd.Series([0], index=[-1])).iloc[-1] >= 3 else 0
     
     # 5. SMA 50 Proximity (Screener Alignment)
     sma_pts = 0
-    if 'SMA_50' in df.columns:
+    if 'SMA_50' in df.columns and 'SMA_50_prev' in df.columns:
         sma_val = df['SMA_50'].iloc[-1]
+        sma_val_prev = df['SMA_50_prev'].iloc[-1]
         close_val = df['Close'].iloc[-1]
+        sma_slope_up = sma_val > sma_val_prev
+        
         if pd.notna(sma_val) and sma_val > 0:
-            dma_ext_pct = ((close_val - sma_val) / sma_val) * 100
-            if dma_ext_pct > 0 and dma_ext_pct <= 5.0:
-                sma_pts = 2
-            elif dma_ext_pct > 5.0 and dma_ext_pct <= 10.0:
-                sma_pts = 1
-            else:
+            if close_val > sma_val and not sma_slope_up:
                 sma_pts = 0
+            else:
+                dma_ext_pct = ((close_val - sma_val) / sma_val) * 100
+                if dma_ext_pct > 0 and dma_ext_pct <= 5.0:
+                    sma_pts = 2
+                elif dma_ext_pct > 5.0 and dma_ext_pct <= 10.0:
+                    sma_pts = 1
+                else:
+                    sma_pts = 0
 
     # 6. Support Defense (Bear Trap / Divergence)
     defense_pts = 0
@@ -1442,9 +1480,27 @@ def calculate_master_score(df: pd.DataFrame, fundamentals: dict):
         if latest.get('RSI_Rising', False) or latest.get('Wick_Ratio', 0) > 1.5:
             defense_pts = 1
 
-    total_score = s_points + t_points + v_points + f_points + strength_pts + sma_pts + defense_pts
+    # Technical & Momentum Score Calculation with deduction
+    tech_score = s_points + t_points + v_points + strength_pts + sma_pts + defense_pts
+    ret_1w = latest.get("return_1w", 0.0)
+    if ret_1w <= 0.0:
+        tech_score = max(0, tech_score - 1)
 
-    return total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts, defense_pts
+    total_score = tech_score + f_points
+
+    # Falling Knife Check
+    price_fallen_3d = False
+    if len(df) >= 4:
+        c1 = df['Close'].iloc[-1]
+        c2 = df['Close'].iloc[-2]
+        c3 = df['Close'].iloc[-3]
+        c4 = df['Close'].iloc[-4]
+        if c1 < c2 and c2 < c3 and c3 < c4:
+            price_fallen_3d = True
+
+    is_falling_knife = (ret_1w <= 0.0) and price_fallen_3d
+
+    return total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts, defense_pts, is_falling_knife
 
 
 def get_market_condition(df):
@@ -1541,7 +1597,7 @@ def render_control_center():
 
                             # 2. Get Fundamentals & Master Score
                             b_funda = fetch_fundamentals(t_sym)
-                            m_score, t_pts, _, _, _, _, _, _ = calculate_master_score(b_df, b_funda)
+                            m_score, t_pts, _, _, _, _, _, _, is_fk = calculate_master_score(b_df, b_funda)
 
                             # 2b. Calculate 50 DMA extension percentage
                             b_dma_ext_pct = 0.0
@@ -1565,6 +1621,10 @@ def render_control_center():
                             elif m_score >= 5: m_rating = "MODERATE BUY"
                             elif m_score >= 3: m_rating = "WATCHLIST / HOLD"
                             else: m_rating = "AVOID"
+
+                            # Falling Knife Override
+                            if is_fk and m_rating in ["STRONG BUY", "MODERATE BUY"]:
+                                m_rating = "WATCHLIST / HOLD"
 
                             # Skip adding if rating is AVOID
                             if m_rating == "AVOID":
@@ -1985,7 +2045,7 @@ if search_query:
             h6.metric("Volume Surge", f"{v_ratio_raw:.2f}x", delta=surge_label, delta_color=surge_color)
 
             # --- Master Rating ---
-            total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts, def_pts = calculate_master_score(df, {"roce": roce, "debt_to_equity": debt_to_equity})
+            total_score, t_points, v_points, s_points, f_points, strength_pts, sma_pts, def_pts, is_fk = calculate_master_score(df, funda)
             s_score = (s_points / 2) * 100
             adx_v = float(df["ADX"].iloc[-1])
 
@@ -1993,6 +2053,10 @@ if search_query:
             elif total_score >= 5: master_rating, rating_color_hex = "MODERATE BUY", "#00D4AA"
             elif total_score >= 3: master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
             else: master_rating, rating_color_hex = "AVOID", "#FF4B4B"
+
+            # Falling Knife Override
+            if is_fk and master_rating in ["STRONG BUY", "MODERATE BUY"]:
+                master_rating, rating_color_hex = "WATCHLIST / HOLD", "#FFD700"
 
             r_str = int(df["R1_Strength"].iloc[-1]) if "R1_Strength" in df.columns else 0
 

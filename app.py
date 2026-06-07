@@ -640,6 +640,13 @@ def background_batch_scan():
             w_df["Rating"] = w_df["Rating"].astype(str).replace(
                 {"nan": "AVOID", "NaN": "AVOID", "None": "AVOID", "": "AVOID"}
             )
+
+            # Auto-cleanup AVOID ratings from Watchlist
+            initial_count = len(w_df)
+            w_df = w_df[w_df["Rating"] != "AVOID"]
+            if initial_count > len(w_df):
+                st.toast(f"🧹 Automatically removed {initial_count - len(w_df)} 'AVOID' stocks from Watchlist.", icon="🧹")
+
             save_sheet_data("Watchlist", w_df, w_schema)
 
         # 3. Log to ScanHistory — only when connection is confirmed active
@@ -1558,6 +1565,10 @@ def render_control_center():
                             elif m_score >= 5: m_rating = "MODERATE BUY"
                             elif m_score >= 3: m_rating = "WATCHLIST / HOLD"
                             else: m_rating = "AVOID"
+
+                            # Skip adding if rating is AVOID
+                            if m_rating == "AVOID":
+                                continue
 
                             # 4. Vol Footprint
                             b_vol = b_df["Volume"].iloc[-1]

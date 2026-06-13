@@ -2013,10 +2013,16 @@ if search_query:
             
             if ui_dma_ext_pct > 0 and ui_dma_ext_pct <= 5.0:
                 ui_dma_ext_color = "#00D4AA"
+                metric_delta_color = "normal"
             elif ui_dma_ext_pct > 5.0 and ui_dma_ext_pct <= 10.0:
                 ui_dma_ext_color = "#FFD700"
+                metric_delta_color = "off"
+            elif ui_dma_ext_pct > 10.0:
+                ui_dma_ext_color = "#FF4B4B"
+                metric_delta_color = "inverse"
             else:
                 ui_dma_ext_color = "#FF4B4B"
+                metric_delta_color = "normal"
             
             ui_sign = "+" if ui_dma_ext_pct > 0 else ""
             ui_dma_ext_html = f"<span style='color:{ui_dma_ext_color}; font-weight:bold;'>{ui_sign}{ui_dma_ext_pct:.1f}%</span>"
@@ -2030,7 +2036,7 @@ if search_query:
             c6.metric(r_label, fmt_price(resistance_val), delta=r_delta, delta_color="normal")
             c7.metric("52W High", fmt_price(week52_high))
             c8.metric("52W Low", fmt_price(week52_low))
-            c9.metric("50 DMA", fmt_price(sma_50_val), delta=f"{ui_sign}{ui_dma_ext_pct:.1f}%", delta_color="normal")
+            c9.metric("50 DMA", fmt_price(sma_50_val), delta=f"{ui_sign}{ui_dma_ext_pct:.1f}%", delta_color=metric_delta_color)
 
             # --- Fundamental health ---
             vol_today_raw = latest.get("Volume", 1)

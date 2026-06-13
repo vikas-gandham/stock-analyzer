@@ -2030,7 +2030,7 @@ if search_query:
             c6.metric(r_label, fmt_price(resistance_val), delta=r_delta, delta_color="normal")
             c7.metric("52W High", fmt_price(week52_high))
             c8.metric("52W Low", fmt_price(week52_low))
-            c9.metric("50 DMA", fmt_price(sma_50_val), delta=ui_dma_ext_html, delta_color="off")
+            c9.metric("50 DMA", fmt_price(sma_50_val), delta=f"{ui_sign}{ui_dma_ext_pct:.1f}%", delta_color="off")
 
             # --- Fundamental health ---
             vol_today_raw = latest.get("Volume", 1)

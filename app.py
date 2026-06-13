@@ -2005,7 +2005,23 @@ if search_query:
                 s_label, s_delta = "Support (S1)", f"S2: {fmt_price(s2_val)}"
                 r_label, r_delta = "Resist. (R1)", f"R2: {fmt_price(r2_val)}"
 
-            c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+            # Extract SMA_50 and compute extension before metrics row
+            sma_50_val = latest['SMA_50'] if 'SMA_50' in df.columns else None
+            ui_dma_ext_pct = 0.0
+            if sma_50_val is not None and pd.notna(sma_50_val) and sma_50_val > 0:
+                ui_dma_ext_pct = ((latest['Close'] - sma_50_val) / sma_50_val) * 100
+            
+            if ui_dma_ext_pct > 0 and ui_dma_ext_pct <= 5.0:
+                ui_dma_ext_color = "#00D4AA"
+            elif ui_dma_ext_pct > 5.0 and ui_dma_ext_pct <= 10.0:
+                ui_dma_ext_color = "#FFD700"
+            else:
+                ui_dma_ext_color = "#FF4B4B"
+            
+            ui_sign = "+" if ui_dma_ext_pct > 0 else ""
+            ui_dma_ext_html = f"<span style='color:{ui_dma_ext_color}; font-weight:bold;'>{ui_sign}{ui_dma_ext_pct:.1f}%</span>"
+
+            c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(9)
             c1.metric("Current Price", fmt_price(latest['Close']))
             c2.metric("Day Change %", f"{day_change_pct:,.2f}%", delta=fmt_delta(day_change))
             c3.metric("Ideal Entry (Bounce)", fmt_price(ideal_entry))
@@ -2014,6 +2030,7 @@ if search_query:
             c6.metric(r_label, fmt_price(resistance_val), delta=r_delta, delta_color="normal")
             c7.metric("52W High", fmt_price(week52_high))
             c8.metric("52W Low", fmt_price(week52_low))
+            c9.metric("50 DMA", fmt_price(sma_50_val), delta=ui_dma_ext_html, delta_color="off")
 
             # --- Fundamental health ---
             vol_today_raw = latest.get("Volume", 1)
@@ -2075,24 +2092,6 @@ if search_query:
             cond_label_val, _, _ = get_market_condition(df)
             ui_ctx = str(cond_label_val).strip().replace("🔵 ", "").replace("🟣 ", "").replace("🟢 ", "").replace("🔴 ", "").replace("🟡 ", "").replace("🚀 ", "")
             ui_trend = f"{t_points}/2"
-
-            # Calculate 50 DMA extension for individual ticker
-            ui_dma_ext_pct = 0.0
-            if 'SMA_50' in df.columns:
-                sma_val_ui = df['SMA_50'].iloc[-1]
-                close_val_ui = df['Close'].iloc[-1]
-                if pd.notna(sma_val_ui) and sma_val_ui > 0:
-                    ui_dma_ext_pct = ((close_val_ui - sma_val_ui) / sma_val_ui) * 100
-            
-            if ui_dma_ext_pct > 0 and ui_dma_ext_pct <= 5.0:
-                ui_dma_ext_color = "#00D4AA"
-            elif ui_dma_ext_pct > 5.0 and ui_dma_ext_pct <= 10.0:
-                ui_dma_ext_color = "#FFD700"
-            else:
-                ui_dma_ext_color = "#FF4B4B"
-            
-            ui_sign = "+" if ui_dma_ext_pct > 0 else ""
-            ui_dma_ext_html = f"<span style='color:{ui_dma_ext_color}; font-weight:bold;'>{ui_sign}{ui_dma_ext_pct:.1f}%</span>"
 
             # --- Visual Indicators (Gauge) ---
             c_gauge, c_mom = st.columns(2)
@@ -2391,50 +2390,56 @@ if not p_df.empty:
             r_col[9].markdown(pr["50DMA_Ext"], unsafe_allow_html=True)
             r_col[10].markdown(pr["Verdict_HTML"], unsafe_allow_html=True)
             if r_col[11].button("Analyze", key=f"p_an_{pr['_ticker']}_{pr['_idx']}", on_click=set_search_ticker, args=(pr["_ticker"],)): pass
-            if r_col[12].button("Log & Close", key=f"p_close_{pr['_ticker']}_{pr['_idx']}"):
-                with st.spinner("Archiving trade..."):
-                    # 1. Load Journal
-                    c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
-                    c_df = load_sheet_data("ClosedTrades", c_schema)
-                    
-                    # 2. Calculate Final Metrics
-                    raw_buy = float(pr["_raw_buy_price"])
-                    raw_sell = float(pr["_raw_cmp"])
-                    raw_qty = float(pr["_raw_qty"])
-                    
-                    buy_date = pd.to_datetime(pr["_raw_date"]).date()
-                    sell_date = datetime.now(IST).date()
-                    days_held = max(0, (sell_date - buy_date).days)
-                    
-                    pnl_val = (raw_sell - raw_buy) * raw_qty
-                    pnl_pct = ((raw_sell - raw_buy) / raw_buy) * 100 if raw_buy > 0 else 0
-                    
-                    # 3. Create Archive Row
-                    new_log = pd.DataFrame([{
-                        "Ticker": pr["Ticker"],
-                        "Buy_Date": buy_date.strftime("%Y-%m-%d"),
-                        "Sell_Date": sell_date.strftime("%Y-%m-%d"),
-                        "Buy_Price": round(raw_buy, 2),
-                        "Sell_Price": round(raw_sell, 2),
-                        "Quantity": raw_qty,
-                        "PnL_Value": round(pnl_val, 2),
-                        "PnL_Pct": round(pnl_pct, 2),
-                        "Exit_State": pr["Vol_Foot"],
-                        "Days_Held": days_held
-                    }])
-                    
-                    # 4. Save to Journal & Remove from Live
-                    c_df = pd.concat([c_df, new_log], ignore_index=True)
-                    save_sheet_data("ClosedTrades", c_df, c_schema)
-                    
-                    p_df = p_df.drop(pr["_idx"])
-                    save_sheet_data("Portfolio", p_df, p_schema)
-                    
-                    # 5. Success Notification
-                    pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
-                    log_alert(f"✅ Trade Closed! Final PnL: {pnl_icon} {pnl_pct:.2f}% logged to journal.", icon="✅")
-                    time.sleep(1)
-                    st.rerun()
+            with r_col[12].popover("Log & Close", key=f"p_close_{pr['_ticker']}_{pr['_idx']}"):
+                exit_price = st.number_input(
+                    "Actual Exit Price (₹)",
+                    value=float(pr["_raw_cmp"]),
+                    key=f"exit_price_{pr['_ticker']}_{pr['_idx']}"
+                )
+                if st.button("Confirm Exit", key=f"confirm_exit_{pr['_ticker']}_{pr['_idx']}", type="primary"):
+                    with st.spinner("Archiving trade..."):
+                        # 1. Load Journal
+                        c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
+                        c_df = load_sheet_data("ClosedTrades", c_schema)
+                        
+                        # 2. Calculate Final Metrics
+                        raw_buy = float(pr["_raw_buy_price"])
+                        raw_sell = float(exit_price)
+                        raw_qty = float(pr["_raw_qty"])
+                        
+                        buy_date = pd.to_datetime(pr["_raw_date"]).date()
+                        sell_date = datetime.now(IST).date()
+                        days_held = max(0, (sell_date - buy_date).days)
+                        
+                        pnl_val = (raw_sell - raw_buy) * raw_qty
+                        pnl_pct = ((raw_sell - raw_buy) / raw_buy) * 100 if raw_buy > 0 else 0
+                        
+                        # 3. Create Archive Row
+                        new_log = pd.DataFrame([{
+                            "Ticker": pr["Ticker"],
+                            "Buy_Date": buy_date.strftime("%Y-%m-%d"),
+                            "Sell_Date": sell_date.strftime("%Y-%m-%d"),
+                            "Buy_Price": round(raw_buy, 2),
+                            "Sell_Price": round(raw_sell, 2),
+                            "Quantity": raw_qty,
+                            "PnL_Value": round(pnl_val, 2),
+                            "PnL_Pct": round(pnl_pct, 2),
+                            "Exit_State": pr["Vol_Foot"],
+                            "Days_Held": days_held
+                        }])
+                        
+                        # 4. Save to Journal & Remove from Live
+                        c_df = pd.concat([c_df, new_log], ignore_index=True)
+                        save_sheet_data("ClosedTrades", c_df, c_schema)
+                        
+                        p_df = p_df.drop(pr["_idx"])
+                        save_sheet_data("Portfolio", p_df, p_schema)
+                        
+                        # 5. Success Notification
+                        pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
+                        log_alert(f"✅ Trade Closed! Final PnL: {pnl_icon} {pnl_pct:.2f}% logged to journal.", icon="✅")
+                        time.sleep(1)
+                        st.rerun()
 else:
     st.info("🔍 Portfolio is empty. Search for a ticker above, then click '➕ Add to Portfolio'.")
 

@@ -2635,47 +2635,98 @@ def render_trade_journal():
                 pass  # Never let a disk write block the UI
 
             if not c_df.empty:
-                # 1. Clean Data for Math
+                # 1. Clean Data for Math and Filtering
                 c_df["PnL_Value"] = pd.to_numeric(c_df["PnL_Value"], errors='coerce').fillna(0)
                 c_df["PnL_Pct"] = pd.to_numeric(c_df["PnL_Pct"], errors='coerce').fillna(0)
+                c_df["Sell_Date"] = pd.to_datetime(c_df["Sell_Date"], errors='coerce').dt.date
 
-                # 2. Calculate Key Performance Indicators (KPIs)
-                total_trades = len(c_df)
-                winning_trades = len(c_df[c_df["PnL_Pct"] > 0])
-                win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
-
-                net_pnl = c_df["PnL_Value"].sum()
-                avg_return = c_df["PnL_Pct"].mean()
-                best_trade = c_df["PnL_Pct"].max()
-                avg_days = pd.to_numeric(c_df["Days_Held"], errors='coerce').mean()
-
-                # 3. Render Top-Level Metrics
+                # --- 2. Period Selector UI & Logic ---
                 st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                a1, a2, a3, a4, a5 = st.columns(5)
+                
+                # Determine current dates and Indian FY boundaries
+                today = datetime.now(IST).date()
+                if today.month >= 4:
+                    this_fy_start = datetime(today.year, 4, 1).date()
+                    this_fy_end = datetime(today.year + 1, 3, 31).date()
+                    prev_fy_start = datetime(today.year - 1, 4, 1).date()
+                    prev_fy_end = datetime(today.year, 3, 31).date()
+                else:
+                    this_fy_start = datetime(today.year - 1, 4, 1).date()
+                    this_fy_end = datetime(today.year, 3, 31).date()
+                    prev_fy_start = datetime(today.year - 2, 4, 1).date()
+                    prev_fy_end = datetime(today.year - 1, 3, 31).date()
 
-                a1.metric("Total Trades", total_trades)
-                a2.metric("Win Rate", f"{win_rate:.1f}%")
+                period_col1, period_col2 = st.columns([1, 2])
+                with period_col1:
+                    period_opt = st.selectbox(
+                        "Filter by Period:",
+                        ["All Time", "Last 30 Days", "This Financial Year", "Previous Financial Year", "Custom Period"]
+                    )
+                
+                start_date = None
+                end_date = None
+                
+                if period_opt == "Last 30 Days":
+                    start_date = today - timedelta(days=30)
+                    end_date = today
+                elif period_opt == "This Financial Year":
+                    start_date = this_fy_start
+                    end_date = this_fy_end
+                elif period_opt == "Previous Financial Year":
+                    start_date = prev_fy_start
+                    end_date = prev_fy_end
+                elif period_opt == "Custom Period":
+                    with period_col2:
+                        date_col1, date_col2 = st.columns(2)
+                        with date_col1:
+                            start_date = st.date_input("Start Date", value=today - timedelta(days=30), max_value=today)
+                        with date_col2:
+                            end_date = st.date_input("End Date", value=today, min_value=start_date, max_value=today)
 
-                pnl_color = "normal" if net_pnl >= 0 else "inverse"
-                pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
-                a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
+                # Filter the dataframe
+                filtered_df = c_df.copy()
+                if start_date and end_date:
+                    filtered_df = filtered_df[(filtered_df["Sell_Date"] >= start_date) & (filtered_df["Sell_Date"] <= end_date)]
 
-                a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
-                a5.metric("Best Trade", f"{best_trade:.2f}%")
+                if filtered_df.empty:
+                    st.info(f"📉 No closed trades found for the selected period ({period_opt}).")
+                else:
+                    # 3. Calculate Key Performance Indicators (KPIs) on FILTERED data
+                    total_trades = len(filtered_df)
+                    winning_trades = len(filtered_df[filtered_df["PnL_Pct"] > 0])
+                    win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
 
-                st.markdown("<br>", unsafe_allow_html=True)
+                    net_pnl = filtered_df["PnL_Value"].sum()
+                    avg_return = filtered_df["PnL_Pct"].mean()
+                    best_trade = filtered_df["PnL_Pct"].max()
+                    avg_days = pd.to_numeric(filtered_df["Days_Held"], errors='coerce').mean()
 
-                # 4. Render Historical Ledger
-                st.markdown("##### 📜 Historical Ledger")
+                    # 4. Render Top-Level Metrics
+                    a1, a2, a3, a4, a5 = st.columns(5)
 
-                display_c_df = c_df.copy()
-                display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
-                display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
-                display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-                display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+                    a1.metric("Total Trades", total_trades)
+                    a2.metric("Win Rate", f"{win_rate:.1f}%")
 
-                display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
-                st.dataframe(display_c_df, use_container_width=True, hide_index=True)
+                    pnl_color = "normal" if net_pnl >= 0 else "inverse"
+                    pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
+                    a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
+
+                    a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
+                    a5.metric("Best Trade", f"{best_trade:.2f}%")
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    # 5. Render Historical Ledger
+                    st.markdown("##### 📜 Historical Ledger")
+
+                    display_c_df = filtered_df.copy()
+                    display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
+                    display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
+                    display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+                    display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
+
+                    display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
+                    st.dataframe(display_c_df, use_container_width=True, hide_index=True)
 
             else:
                 st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")

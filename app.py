@@ -1783,14 +1783,14 @@ def render_control_center():
             # 3. --- Table Headers (Placed BELOW the Bulk Add module) ---
             B_COL_RATIOS = [1.5, 1.0, 1.5, 1.0, 1.2, 1.5, 1.5, 1.2]
             bh_col = st.columns(B_COL_RATIOS)
-            bh_col[0].markdown("**Ticker**")
-            bh_col[1].markdown("**Price**")
-            bh_col[2].markdown("**Entry Context**")
-            bh_col[3].markdown("**Trend**")
-            bh_col[4].markdown("**50DMA Ext**")
-            bh_col[5].markdown("**Rating**")
-            bh_col[6].markdown("**Vol Footprint**")
-            bh_col[7].markdown("**Actions**")
+            bh_col[0].markdown("<div style='text-align: center;'><strong>Ticker</strong></div>", unsafe_allow_html=True)
+            bh_col[1].markdown("<div style='text-align: center;'><strong>Price</strong></div>", unsafe_allow_html=True)
+            bh_col[2].markdown("<div style='text-align: center;'><strong>Entry Context</strong></div>", unsafe_allow_html=True)
+            bh_col[3].markdown("<div style='text-align: center;'><strong>Trend</strong></div>", unsafe_allow_html=True)
+            bh_col[4].markdown("<div style='text-align: center;'><strong>50DMA Ext</strong></div>", unsafe_allow_html=True)
+            bh_col[5].markdown("<div style='text-align: center;'><strong>Rating</strong></div>", unsafe_allow_html=True)
+            bh_col[6].markdown("<div style='text-align: center;'><strong>Vol Footprint</strong></div>", unsafe_allow_html=True)
+            bh_col[7].markdown("<div style='text-align: center;'><strong>Actions</strong></div>", unsafe_allow_html=True)
             st.markdown("---")
 
             for idx, row in b_results.iterrows():
@@ -1811,13 +1811,13 @@ def render_control_center():
                 t_html = f"<span style='color:{t_color}; font-weight:bold;'>{t_str}</span>"
 
                 rb_col = st.columns(B_COL_RATIOS)
-                rb_col[0].write(row["Ticker"])
-                rb_col[1].write(f"₹{row['Price']}")
-                rb_col[2].markdown(c_html, unsafe_allow_html=True)
-                rb_col[3].markdown(t_html, unsafe_allow_html=True)
-                rb_col[4].markdown(row["50DMA Ext"], unsafe_allow_html=True)
-                rb_col[5].markdown(r_html, unsafe_allow_html=True)
-                rb_col[6].write(row["Vol Footprint"])
+                rb_col[0].markdown(f"<div style='text-align: center;'>{row['Ticker']}</div>", unsafe_allow_html=True)
+                rb_col[1].markdown(f"<div style='text-align: center;'>₹{row['Price']}</div>", unsafe_allow_html=True)
+                rb_col[2].markdown(f"<div style='text-align: center;'>{c_html}</div>", unsafe_allow_html=True)
+                rb_col[3].markdown(f"<div style='text-align: center;'>{t_html}</div>", unsafe_allow_html=True)
+                rb_col[4].markdown(f"<div style='text-align: center;'>{row['50DMA Ext']}</div>", unsafe_allow_html=True)
+                rb_col[5].markdown(f"<div style='text-align: center;'>{r_html}</div>", unsafe_allow_html=True)
+                rb_col[6].markdown(f"<div style='text-align: center;'>{row['Vol Footprint']}</div>", unsafe_allow_html=True)
                 clean_p = sanitize_ticker(row["RawTicker"])
                 is_tracked = clean_p in existing_watch
                 
@@ -2385,22 +2385,22 @@ if not p_df.empty:
         HEADERS = ["Ticker", "Buy Price", "CMP", "Init Stop", "Trail Stop", "RSI", "T1 (Book 50%)", "% to Stop", "Vol Foot", "50DMA Ext", "Verdict", "Analyze", "Close"]
         h_col = st.columns(P_COL_LAYOUT)
         for col, header in zip(h_col, HEADERS):
-            col.markdown(f"**{header}**")
+            col.markdown(f"<div style='text-align: center;'><strong>{header}</strong></div>", unsafe_allow_html=True)
         st.markdown("---")
 
         for pr in port_display_rows:
             r_col = st.columns(P_COL_LAYOUT)
-            r_col[0].write(pr["Ticker"])
-            r_col[1].write(pr["Buy_Price"])
-            r_col[2].write(pr["CMP"])
-            r_col[3].write(pr["Init_Stop"])
-            r_col[4].write(pr["Trail_Stop"])
-            r_col[5].markdown(pr["RSI_HTML"], unsafe_allow_html=True)
-            r_col[6].markdown(pr["T1_HTML"], unsafe_allow_html=True)
-            r_col[7].markdown(pr["PCT_HTML"], unsafe_allow_html=True)
-            r_col[8].write(pr["Vol_Foot"])
-            r_col[9].markdown(pr["50DMA_Ext"], unsafe_allow_html=True)
-            r_col[10].markdown(pr["Verdict_HTML"], unsafe_allow_html=True)
+            r_col[0].markdown(f"<div style='text-align: center;'>{pr['Ticker']}</div>", unsafe_allow_html=True)
+            r_col[1].markdown(f"<div style='text-align: center;'>{pr['Buy_Price']}</div>", unsafe_allow_html=True)
+            r_col[2].markdown(f"<div style='text-align: center;'>{pr['CMP']}</div>", unsafe_allow_html=True)
+            r_col[3].markdown(f"<div style='text-align: center;'>{pr['Init_Stop']}</div>", unsafe_allow_html=True)
+            r_col[4].markdown(f"<div style='text-align: center;'>{pr['Trail_Stop']}</div>", unsafe_allow_html=True)
+            r_col[5].markdown(f"<div style='text-align: center;'>{pr['RSI_HTML']}</div>", unsafe_allow_html=True)
+            r_col[6].markdown(f"<div style='text-align: center;'>{pr['T1_HTML']}</div>", unsafe_allow_html=True)
+            r_col[7].markdown(f"<div style='text-align: center;'>{pr['PCT_HTML']}</div>", unsafe_allow_html=True)
+            r_col[8].markdown(f"<div style='text-align: center;'>{pr['Vol_Foot']}</div>", unsafe_allow_html=True)
+            r_col[9].markdown(f"<div style='text-align: center;'>{pr['50DMA_Ext']}</div>", unsafe_allow_html=True)
+            r_col[10].markdown(f"<div style='text-align: center;'>{pr['Verdict_HTML']}</div>", unsafe_allow_html=True)
             if r_col[11].button("Analyze", key=f"p_an_{pr['_ticker']}_{pr['_idx']}", on_click=set_search_ticker, args=(pr["_ticker"],)): pass
             with r_col[12].popover("Log & Close", key=f"p_close_{pr['_ticker']}_{pr['_idx']}"):
                 exit_price = st.number_input(
@@ -2550,7 +2550,7 @@ if not w_df.empty:
         # Header row
         h_cols = st.columns(COL_LAYOUT)
         for col, header in zip(h_cols, HEADERS):
-            col.markdown(f"**{header}**")
+            col.markdown(f"<div style='text-align: center;'><strong>{header}</strong></div>", unsafe_allow_html=True)
         st.markdown("---")
 
         # Data rows — all key columns HTML color-coded, buttons inline
@@ -2586,13 +2586,13 @@ if not w_df.empty:
             trend_html = f"<span style='color:{trend_color}; font-weight:bold;'>{trend_str}</span>"
 
             r_cols = st.columns(COL_LAYOUT)
-            r_cols[0].write(dr["Ticker"])
-            r_cols[1].write(dr["Price"])
-            r_cols[2].markdown(ctx_html, unsafe_allow_html=True)
-            r_cols[3].markdown(trend_html, unsafe_allow_html=True)
-            r_cols[4].markdown(dr["50DMA Ext"], unsafe_allow_html=True)
-            r_cols[5].markdown(rating_html, unsafe_allow_html=True)
-            r_cols[6].write(dr["Vol Footprint"])
+            r_cols[0].markdown(f"<div style='text-align: center;'>{dr['Ticker']}</div>", unsafe_allow_html=True)
+            r_cols[1].markdown(f"<div style='text-align: center;'>{dr['Price']}</div>", unsafe_allow_html=True)
+            r_cols[2].markdown(f"<div style='text-align: center;'>{ctx_html}</div>", unsafe_allow_html=True)
+            r_cols[3].markdown(f"<div style='text-align: center;'>{trend_html}</div>", unsafe_allow_html=True)
+            r_cols[4].markdown(f"<div style='text-align: center;'>{dr['50DMA Ext']}</div>", unsafe_allow_html=True)
+            r_cols[5].markdown(f"<div style='text-align: center;'>{rating_html}</div>", unsafe_allow_html=True)
+            r_cols[6].markdown(f"<div style='text-align: center;'>{dr['Vol Footprint']}</div>", unsafe_allow_html=True)
             if r_cols[7].button("Analyze", key=f"an_{dr['_ticker']}_{dr['_idx']}", use_container_width=True, on_click=set_search_ticker, args=(dr["_ticker"],)):
                 pass
             if r_cols[8].button("🗑️", key=f"del_{dr['_ticker']}_{dr['_idx']}"):
@@ -2759,13 +2759,49 @@ def render_trade_journal():
                     st.markdown("##### 📜 Historical Ledger")
 
                     display_c_df = filtered_df.copy()
-                    display_c_df["PnL_Value"] = display_c_df["PnL_Value"].apply(lambda x: f"₹{format_indian(x, is_price=True)}")
-                    display_c_df["PnL_Pct"] = display_c_df["PnL_Pct"].apply(lambda x: f"{x:+.2f}%")
-                    display_c_df["Buy_Price"] = display_c_df["Buy_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-                    display_c_df["Sell_Price"] = display_c_df["Sell_Price"].apply(lambda x: f"₹{format_indian(float(x), is_price=True)}")
-
                     display_c_df = display_c_df.sort_values(by="Sell_Date", ascending=False).reset_index(drop=True)
-                    st.dataframe(display_c_df, use_container_width=True, hide_index=True)
+
+                    J_COL_RATIOS = [1.2, 1.2, 1.2, 1.2, 1.2, 1.0, 1.2, 1.2, 1.5, 1.0]
+                    jh_cols = st.columns(J_COL_RATIOS)
+                    J_HEADERS = ["Ticker", "Buy Date", "Sell Date", "Buy Price", "Sell Price", "Qty", "PnL Value", "PnL %", "Exit State", "Days Held"]
+                    for col, header in zip(jh_cols, J_HEADERS):
+                        col.markdown(f"<div style='text-align: center;'><strong>{header}</strong></div>", unsafe_allow_html=True)
+                    st.markdown("---")
+
+                    for idx, row in display_c_df.iterrows():
+                        jr_cols = st.columns(J_COL_RATIOS)
+                        
+                        try:
+                            p_val = float(row["PnL_Value"])
+                        except:
+                            p_val = 0.0
+                        
+                        pnl_color = "#00d26a" if p_val >= 0 else "#f7556a"
+                        
+                        pnl_val_formatted = f"₹{format_indian(p_val, is_price=True)}"
+                        pnl_pct_formatted = f"{float(row['PnL_Pct']):+.2f}%"
+                        
+                        pnl_val_html = f"<span style='color:{pnl_color}; font-weight:bold;'>{pnl_val_formatted}</span>"
+                        pnl_pct_html = f"<span style='color:{pnl_color}; font-weight:bold;'>{pnl_pct_formatted}</span>"
+                        
+                        try:
+                            qty_val = str(int(float(row['Quantity'])))
+                        except:
+                            qty_val = str(row['Quantity'])
+                            
+                        buy_price_fmt = f"₹{format_indian(float(row['Buy_Price']), is_price=True)}"
+                        sell_price_fmt = f"₹{format_indian(float(row['Sell_Price']), is_price=True)}"
+                        
+                        jr_cols[0].markdown(f"<div style='text-align: center;'>{row['Ticker']}</div>", unsafe_allow_html=True)
+                        jr_cols[1].markdown(f"<div style='text-align: center;'>{row['Buy_Date']}</div>", unsafe_allow_html=True)
+                        jr_cols[2].markdown(f"<div style='text-align: center;'>{row['Sell_Date']}</div>", unsafe_allow_html=True)
+                        jr_cols[3].markdown(f"<div style='text-align: center;'>{buy_price_fmt}</div>", unsafe_allow_html=True)
+                        jr_cols[4].markdown(f"<div style='text-align: center;'>{sell_price_fmt}</div>", unsafe_allow_html=True)
+                        jr_cols[5].markdown(f"<div style='text-align: center;'>{qty_val}</div>", unsafe_allow_html=True)
+                        jr_cols[6].markdown(f"<div style='text-align: center;'>{pnl_val_html}</div>", unsafe_allow_html=True)
+                        jr_cols[7].markdown(f"<div style='text-align: center;'>{pnl_pct_html}</div>", unsafe_allow_html=True)
+                        jr_cols[8].markdown(f"<div style='text-align: center;'>{row['Exit_State']}</div>", unsafe_allow_html=True)
+                        jr_cols[9].markdown(f"<div style='text-align: center;'>{row['Days_Held']}</div>", unsafe_allow_html=True)
 
             else:
                 st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")

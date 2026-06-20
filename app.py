@@ -2765,7 +2765,7 @@ def render_trade_journal():
                     jh_cols = st.columns(J_COL_RATIOS)
                     J_HEADERS = ["Ticker", "Buy Date", "Sell Date", "Buy Price", "Sell Price", "Qty", "PnL Value", "PnL %", "Exit State", "Days Held"]
                     for col, header in zip(jh_cols, J_HEADERS):
-                        col.markdown(f"<div style='text-align: center;'><strong>{header}</strong></div>", unsafe_allow_html=True)
+                        col.markdown(f"<div style='text-align: center; padding: 10px 0;'><strong>{header}</strong></div>", unsafe_allow_html=True)
                     st.markdown("---")
 
                     for idx, row in display_c_df.iterrows():
@@ -2792,16 +2792,18 @@ def render_trade_journal():
                         buy_price_fmt = f"₹{format_indian(float(row['Buy_Price']), is_price=True)}"
                         sell_price_fmt = f"₹{format_indian(float(row['Sell_Price']), is_price=True)}"
                         
-                        jr_cols[0].markdown(f"<div style='text-align: center;'>{row['Ticker']}</div>", unsafe_allow_html=True)
-                        jr_cols[1].markdown(f"<div style='text-align: center;'>{row['Buy_Date']}</div>", unsafe_allow_html=True)
-                        jr_cols[2].markdown(f"<div style='text-align: center;'>{row['Sell_Date']}</div>", unsafe_allow_html=True)
-                        jr_cols[3].markdown(f"<div style='text-align: center;'>{buy_price_fmt}</div>", unsafe_allow_html=True)
-                        jr_cols[4].markdown(f"<div style='text-align: center;'>{sell_price_fmt}</div>", unsafe_allow_html=True)
-                        jr_cols[5].markdown(f"<div style='text-align: center;'>{qty_val}</div>", unsafe_allow_html=True)
-                        jr_cols[6].markdown(f"<div style='text-align: center;'>{pnl_val_html}</div>", unsafe_allow_html=True)
-                        jr_cols[7].markdown(f"<div style='text-align: center;'>{pnl_pct_html}</div>", unsafe_allow_html=True)
-                        jr_cols[8].markdown(f"<div style='text-align: center;'>{row['Exit_State']}</div>", unsafe_allow_html=True)
-                        jr_cols[9].markdown(f"<div style='text-align: center;'>{row['Days_Held']}</div>", unsafe_allow_html=True)
+                        cell_style = "style='text-align: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05);'"
+                        
+                        jr_cols[0].markdown(f"<div {cell_style}>{row['Ticker']}</div>", unsafe_allow_html=True)
+                        jr_cols[1].markdown(f"<div {cell_style}>{row['Buy_Date']}</div>", unsafe_allow_html=True)
+                        jr_cols[2].markdown(f"<div {cell_style}>{row['Sell_Date']}</div>", unsafe_allow_html=True)
+                        jr_cols[3].markdown(f"<div {cell_style}>{buy_price_fmt}</div>", unsafe_allow_html=True)
+                        jr_cols[4].markdown(f"<div {cell_style}>{sell_price_fmt}</div>", unsafe_allow_html=True)
+                        jr_cols[5].markdown(f"<div {cell_style}>{qty_val}</div>", unsafe_allow_html=True)
+                        jr_cols[6].markdown(f"<div {cell_style}>{pnl_val_html}</div>", unsafe_allow_html=True)
+                        jr_cols[7].markdown(f"<div {cell_style}>{pnl_pct_html}</div>", unsafe_allow_html=True)
+                        jr_cols[8].markdown(f"<div {cell_style}>{row['Exit_State']}</div>", unsafe_allow_html=True)
+                        jr_cols[9].markdown(f"<div {cell_style}>{row['Days_Held']}</div>", unsafe_allow_html=True)
 
             else:
                 st.info("📉 Trade Journal is empty. Close a trade in your Live Portfolio to generate analytics.")

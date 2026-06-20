@@ -293,6 +293,12 @@ def ensure_worksheets_exist(conn):
         except Exception:
             conn.create(worksheet="ClosedTrades", data=pd.DataFrame(columns=["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]))
             
+        # 6. CapitalLog (Capital Tracker)
+        try:
+            conn.read(worksheet="CapitalLog", ttl=0)
+        except Exception:
+            conn.create(worksheet="CapitalLog", data=pd.DataFrame(columns=["Date", "Amount"]))
+            
     except Exception:
         # Flag error but do not stop the app
         st.session_state["sheets_error"] = True
@@ -2626,6 +2632,10 @@ def render_trade_journal():
         else:
             c_schema = ["Ticker", "Buy_Date", "Sell_Date", "Buy_Price", "Sell_Price", "Quantity", "PnL_Value", "PnL_Pct", "Exit_State", "Days_Held"]
             c_df = load_sheet_data("ClosedTrades", c_schema)
+            cap_df = load_sheet_data("CapitalLog", ["Date", "Amount"])
+            cap_df["Amount"] = pd.to_numeric(cap_df["Amount"], errors='coerce').fillna(0)
+            cap_df["Date"] = pd.to_datetime(cap_df["Date"], errors='coerce').dt.date
+            total_capital_added = cap_df["Amount"].sum()
 
             # ── Explicit journal backup anchored to project root ────────
             try:
@@ -2655,6 +2665,23 @@ def render_trade_journal():
                     this_fy_end = datetime(today.year, 3, 31).date()
                     prev_fy_start = datetime(today.year - 2, 4, 1).date()
                     prev_fy_end = datetime(today.year - 1, 3, 31).date()
+
+                with st.popover("➕ Log Capital Addition"):
+                    cap_date = st.date_input("Deposit Date")
+                    cap_amount = st.number_input("Amount (₹)", min_value=1.0, step=5000.0)
+                    if st.button("Save Capital"):
+                        with st.spinner("Logging Capital..."):
+                            cap_log_cols = ["Date", "Amount"]
+                            current_cap_df = load_sheet_data("CapitalLog", cap_log_cols)
+                            new_cap_row = pd.DataFrame([{
+                                "Date": cap_date.strftime("%Y-%m-%d"),
+                                "Amount": round(float(cap_amount), 2)
+                            }])
+                            updated_cap_df = pd.concat([current_cap_df, new_cap_row], ignore_index=True)
+                            save_sheet_data("CapitalLog", updated_cap_df, cap_log_cols)
+                            st.toast("Capital Logged!")
+                            time.sleep(1)
+                            st.rerun()
 
                 period_col1, period_col2 = st.columns([1, 2])
                 with period_col1:
@@ -2688,6 +2715,12 @@ def render_trade_journal():
                 if start_date and end_date:
                     filtered_df = filtered_df[(filtered_df["Sell_Date"] >= start_date) & (filtered_df["Sell_Date"] <= end_date)]
 
+                # Filter cap_df
+                period_cap_df = cap_df.copy()
+                if start_date and end_date:
+                    period_cap_df = period_cap_df[(period_cap_df["Date"] >= start_date) & (period_cap_df["Date"] <= end_date)]
+                period_capital_added = period_cap_df["Amount"].sum()
+
                 if filtered_df.empty:
                     st.info(f"📉 No closed trades found for the selected period ({period_opt}).")
                 else:
@@ -2702,17 +2735,23 @@ def render_trade_journal():
                     avg_days = pd.to_numeric(filtered_df["Days_Held"], errors='coerce').mean()
 
                     # 4. Render Top-Level Metrics
-                    a1, a2, a3, a4, a5 = st.columns(5)
+                    a1, a2, a3, a4, a5, a6 = st.columns(6)
 
-                    a1.metric("Total Trades", total_trades)
-                    a2.metric("Win Rate", f"{win_rate:.1f}%")
+                    a1.metric(
+                        "Total Capital Added", 
+                        f"₹{format_indian(total_capital_added, is_price=True)}", 
+                        delta=f"+₹{format_indian(period_capital_added, is_price=True)} (Period)", 
+                        delta_color="off"
+                    )
+                    a2.metric("Total Trades", total_trades)
+                    a3.metric("Win Rate", f"{win_rate:.1f}%")
 
                     pnl_color = "normal" if net_pnl >= 0 else "inverse"
                     pnl_label = "Profitable" if net_pnl >= 0 else "Drawdown"
-                    a3.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
+                    a4.metric("Net P&L", f"₹{format_indian(net_pnl, is_price=True)}", delta=pnl_label, delta_color=pnl_color)
 
-                    a4.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
-                    a5.metric("Best Trade", f"{best_trade:.2f}%")
+                    a5.metric("Avg Return", f"{avg_return:.2f}%", delta=f"{avg_days:.1f} Days Held", delta_color="off")
+                    a6.metric("Best Trade", f"{best_trade:.2f}%")
 
                     st.markdown("<br>", unsafe_allow_html=True)
 
